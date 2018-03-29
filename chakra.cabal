@@ -9,7 +9,7 @@ author:              Author name here
 maintainer:          example@example.com
 copyright:           2018 Author name here
 category:            Web
-build-type:          Custom
+build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 extra-source-files:
@@ -19,12 +19,10 @@ extra-source-files:
   vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraCoreVersion.h
   vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraDebug.h
   vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraCore.h
-  vendor/ChakraCoreFiles_1_8_2_Linux/lib/libChakraCore.so
   vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCommon.h
   vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCoreVersion.h
   vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraDebug.h
   vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCore.h
-  vendor/ChakraCoreFiles_1_8_2_OSX/lib/libChakraCore.dylib
 
 tested-with:
   GHC == 8.2.2
@@ -46,18 +44,13 @@ library
                      , vector
   default-language:    Haskell2010
   ghc-options: -O2 -Wall
-  -- c-sources: vendor/duktape/src/duktape.c c-src/interrupt.c c-src/dukface.c
   cc-options: -O2 -Wno-deprecated-declarations -Wall
   if os(darwin)
-    --cabal won't do this. see Setup.hs for overly complicated workaround
-    --extra-lib-dirs: ./vendor/ChakraCoreFiles_1_8_2_OSX/lib/
     include-dirs: vendor/ChakraCoreFiles_1_8_2_OSX/include
   if os(linux)
-    --cabal won't do this. see Setup.hs for overly complicated workaround
-    --extra-lib-dirs: ./vendor/ChakraCoreFiles_1_8_2_Linux/lib/
     include-dirs: vendor/ChakraCoreFiles_1_8_2_Linux/include
-  extra-libraries: ChakraCore
   includes: ChakraCommon.h ChakraCoreVersion.h ChakraDebug.h ChakraCore.h
+  extra-libraries: ChakraCore
   default-extensions: BangPatterns
                     , ConstraintKinds
                     , DataKinds
@@ -93,7 +86,7 @@ library
                     , TypeOperators
 test-suite tests
     default-language: Haskell2010
-    ghc-options: -threaded -O2 -Wall -Wno-orphans
+    ghc-options: -threaded -O2 -Wall -Wno-orphans -dynamic
     hs-source-dirs: tests
     main-is: Test.hs
     type: exitcode-stdio-1.0
