@@ -1,5 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 #include "ChakraCommon.h"
 #include "ChakraCoreVersion.h"
@@ -16,18 +18,31 @@ import Foreign.Marshal.Alloc
 mNullPtr :: Ptr a -> IO (Ptr b)
 mNullPtr = return . const nullPtr
 
-mNullFunPtr :: Ptr a -> IO (FunPtr b)
-mNullFunPtr = return . const nullFunPtr
+withNullFunPtr :: a -> (FunPtr b -> IO c) -> IO c
+withNullFunPtr _ f = f nullFunPtr
+
+throwIfJsError :: CInt -> IO ()
+throwIfJsError e = case (toEnum . fromIntegral $ e) of
+  a@JsNoError -> print a
+  a -> print a >> error "fk"
 
 {#enum JsErrorCode {} deriving (Eq, Show) #}
 {#enum JsValueType {} deriving (Eq, Show) #}
 {#enum JsRuntimeAttributes {} deriving (Eq, Show) #}
 
 {#pointer JsRuntimeHandle #}
+{#pointer JsContextRef #}
+{#pointer JsValueRef #}
 
 {#fun JsCreateRuntime as ^
  {`JsRuntimeAttributes',
-  id `FunPtr (FunPtr (Ptr () -> IO ()) -> Ptr () -> IO CInt)',
+  withNullFunPtr* `()',
   alloca- `JsRuntimeHandle' peek*
-} -> `()'
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsCreateContext as ^
+ {`JsRuntimeHandle',
+  alloca- `JsContextRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
  #}

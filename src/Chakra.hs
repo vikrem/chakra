@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
 module Chakra where
-
+import Raw
 import qualified Language.C.Inline as C
 
 C.include "ChakraCommon.h"
@@ -11,6 +11,9 @@ C.include "ChakraCore.h"
 
 someFunc :: IO ()
 someFunc = do
+  let at = JsRuntimeAttributeNone
+  runtime <- jsCreateRuntime at ()
+  context <- jsCreateContext runtime
   [C.block| void {
       JsRuntimeHandle runtime;
       JsContextRef context;
