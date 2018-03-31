@@ -1,36 +1,46 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
 module Chakra where
-import Raw
-import qualified Language.C.Inline as C
 
-C.include "ChakraCommon.h"
-C.include "ChakraCoreVersion.h"
-C.include "ChakraDebug.h"
-C.include "ChakraCore.h"
+import Raw
+import Control.Concurrent.Async
+import Control.Exception.Safe
+import Control.Monad
+import Control.Monad.Identity
+import Control.Monad.IO.Class
+
+newtype Chakra a = MkChakra { unChakra :: IO a } deriving (Functor, Applicative, Monad)
+
+boundedWait :: IO a -> IO a
+boundedWait f = asyncBound f >>= wait
 
 someFunc :: IO ()
 someFunc = do
-  let at = JsRuntimeAttributeNone
-  runtime <- jsCreateRuntime at ()
+  s <- runChakra $ chakraEval "(function(){ return 3 + 15 + 12; })();"
+  putStrLn s
+
+runChakra :: Chakra a -> IO a
+runChakra MkChakra{..} = boundedWait $
+  bracket
+    setupChakra
+    teardownChakra
+    (const unChakra)
+
+setupChakra :: IO JsRuntimeHandle
+setupChakra = do
+  runtime <- jsCreateRuntime JsRuntimeAttributeNone ()
   context <- jsCreateContext runtime
   jsSetCurrentContext context
-  script <- jsCreateString "5;"
-  source <- jsCreateString "the internet"
+  return runtime
+
+teardownChakra :: JsRuntimeHandle -> IO ()
+teardownChakra rt = do
+  jsSetCurrentContext jsEmptyContext
+  jsDisposeRuntime rt
+
+chakraEval :: String -> Chakra String
+chakraEval src = MkChakra $ do
+  script <- jsCreateString src
+  source <- jsCreateString "[runScript]"
   ret <- jsRun script 0 source JsParseScriptAttributeNone
   retStr <- jsConvertValueToString ret
-  s <- extractJsString retStr
-  print s
-  [C.block| void {
-      JsRuntimeHandle runtime;
-      JsContextRef context;
-      JsValueRef result;
-      JsCreateRuntime(JsRuntimeAttributeNone, NULL, &runtime);
-      JsCreateContext(runtime, &context);
-      JsSetCurrentContext(context);
-      JsSetCurrentContext(JS_INVALID_REFERENCE);
-      JsDisposeRuntime(runtime);
-  } |]
-
-  putStrLn "ye"
-
+  extractJsString retStr

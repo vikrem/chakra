@@ -9,6 +9,7 @@
 #include "ChakraCore.h"
 module Raw where
 
+import Control.Exception.Safe
 import Foreign.C.Types
 import Foreign.C.String
 import Foreign.Ptr
@@ -27,8 +28,14 @@ withNullFunPtr _ f = f Foreign.Ptr.nullFunPtr
 
 throwIfJsError :: CInt -> IO ()
 throwIfJsError e = case (toEnum . fromIntegral $ e) of
-  a@JsNoError -> print a
-  a -> print a >> error ("JS Error: " ++ show a)
+  JsNoError -> pure () -- No exception
+  _ -> do
+    -- Grab the exception string from the runtime and throw it
+    exc <- jsGetAndClearException
+    excStrVal <- jsConvertValueToString exc
+    excStr <- extractJsString excStrVal
+    jsSetException exc -- Don't clear the exception
+    throwString excStr -- Toss
 
 {#enum JsErrorCode {} deriving (Eq, Show) #}
 {#enum JsValueType {} deriving (Eq, Show) #}
@@ -36,6 +43,9 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
 {#enum JsParseScriptAttributes {} deriving (Eq, Show) #}
 
 type JsSourceContext = {#type JsSourceContext #}
+
+jsEmptyContext :: JsContextRef
+jsEmptyContext = Raw.nullPtr
 
 {#pointer JsRuntimeHandle #}
 {#pointer JsContextRef #}
@@ -85,6 +95,21 @@ type JsSourceContext = {#type JsSourceContext #}
   id `(Ptr CChar)',
   id `CULong',
   alloca- `CULong' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsDisposeRuntime as ^
+ {`JsRuntimeHandle'
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsGetAndClearException as ^
+ {alloca- `JsValueRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsSetException as ^
+ {`JsValueRef'
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
