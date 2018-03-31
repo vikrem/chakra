@@ -14,6 +14,13 @@ someFunc = do
   let at = JsRuntimeAttributeNone
   runtime <- jsCreateRuntime at ()
   context <- jsCreateContext runtime
+  jsSetCurrentContext context
+  script <- jsCreateString "5;"
+  source <- jsCreateString "the internet"
+  ret <- jsRun script 0 source JsParseScriptAttributeNone
+  retStr <- jsConvertValueToString ret
+  s <- extractJsString retStr
+  print s
   [C.block| void {
       JsRuntimeHandle runtime;
       JsContextRef context;
@@ -26,3 +33,4 @@ someFunc = do
   } |]
 
   putStrLn "ye"
+
