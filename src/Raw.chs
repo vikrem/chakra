@@ -33,7 +33,7 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
     -- Grab the exception string from the runtime and throw it
     exc <- jsGetAndClearException
     excStrVal <- jsConvertValueToString exc
-    excStr <- extractJsString excStrVal
+    excStr <- unsafeExtractJsString excStrVal
     jsSetException exc -- Don't clear the exception
     throwString excStr -- Toss
 
@@ -114,8 +114,8 @@ jsEmptyContext = Raw.nullPtr
  #}
 
 -- val MUST BE A JS STRING !
-extractJsString :: JsValueRef -> IO String
-extractJsString val = do
+unsafeExtractJsString :: JsValueRef -> IO String
+unsafeExtractJsString val = do
   strLen <- jsCopyString val Raw.nullPtr 0
   allocaBytes (fromIntegral strLen) $ \p -> do
     jsCopyString val p strLen

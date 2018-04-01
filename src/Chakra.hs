@@ -1,5 +1,14 @@
 {-# LANGUAGE RecordWildCards #-}
-module Chakra where
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
+
+module Chakra (
+  someFunc,
+  runChakra,
+  chakraEval,
+  Chakra
+              )
+where
 
 import Raw
 import Control.Concurrent.Async
@@ -9,6 +18,8 @@ import Control.Monad.Identity
 import Control.Monad.IO.Class
 
 newtype Chakra a = MkChakra { unChakra :: IO a } deriving (Functor, Applicative, Monad)
+
+data JsValue (t :: JsValueType) = MkJsValue JsValueRef
 
 boundedWait :: IO a -> IO a
 boundedWait f = asyncBound f >>= wait
@@ -39,8 +50,12 @@ teardownChakra rt = do
 
 chakraEval :: String -> Chakra String
 chakraEval src = MkChakra $ do
-  script <- jsCreateString src
-  source <- jsCreateString "[runScript]"
-  ret <- jsRun script 0 source JsParseScriptAttributeNone
-  retStr <- jsConvertValueToString ret
-  extractJsString retStr
+    script <- jsCreateString src
+    source <- jsCreateString "[runScript]"
+    ret <- jsRun script 0 source JsParseScriptAttributeNone
+    jsConvertToString ret
+
+jsConvertToString :: JsValueRef -> IO String
+jsConvertToString ref = do
+  str_ref <- jsConvertValueToString ref
+  unsafeExtractJsString str_ref
