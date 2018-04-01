@@ -10,16 +10,13 @@ module Chakra (
               )
 where
 
+import Types
 import Raw
 import Control.Concurrent.Async
 import Control.Exception.Safe
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.IO.Class
-
-newtype Chakra a = MkChakra { unChakra :: IO a } deriving (Functor, Applicative, Monad)
-
-data JsValue (t :: JsValueType) = MkJsValue JsValueRef
 
 boundedWait :: IO a -> IO a
 boundedWait f = asyncBound f >>= wait
