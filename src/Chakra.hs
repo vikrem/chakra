@@ -49,14 +49,15 @@ teardownChakra rt = do
   jsDisposeRuntime rt
 
 chakraEval :: String -> Chakra JsValue
-chakraEval src = do
-  retobj <- MkChakra $ do
+chakraEval = unsafeChakraEval >=> wrapJsValue
+
+unsafeChakraEval :: String -> Chakra JsValueRef
+unsafeChakraEval src = MkChakra $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
-  wrapJsValue retobj
 
-jsConvertToString :: JsValueRef -> IO String
-jsConvertToString ref = do
-  str_ref <- jsConvertValueToString ref
-  unsafeExtractJsString str_ref
+-- jsConvertToString :: JsValueRef -> IO String
+-- jsConvertToString ref = do
+--   str_ref <- jsConvertValueToString ref
+--   unsafeExtractJsString str_ref

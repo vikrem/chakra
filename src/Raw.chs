@@ -9,6 +9,8 @@
 #include "ChakraCore.h"
 module Raw where
 
+import Control.Monad ((>=>))
+
 import Control.Exception.Safe
 import Foreign.C.Types
 import Foreign.C.String
@@ -16,6 +18,7 @@ import Foreign.Ptr
 import Foreign.Storable
 import Foreign.ForeignPtr
 import Foreign.Marshal.Alloc
+import Foreign.Marshal.Array
 
 mNullPtr :: Ptr a -> IO (Ptr b)
 mNullPtr = return . const Foreign.Ptr.nullPtr
@@ -26,16 +29,33 @@ nullFunPtr = Foreign.Ptr.nullFunPtr
 withNullFunPtr :: a -> (FunPtr b -> IO c) -> IO c
 withNullFunPtr _ f = f Foreign.Ptr.nullFunPtr
 
+-- use [a] for C calling convention (*a, size_t len)
+splatArray :: Storable a => [a] -> ((Ptr a, CUShort) -> IO b) -> IO b
+splatArray arr fn = do
+  withArrayLen arr $ \len pt -> fn (pt, fromIntegral len)
+
+peekJsType :: (Ptr CInt) -> IO JsValueType
+peekJsType = peek >=> return . toEnum . fromIntegral
+
 throwIfJsError :: CInt -> IO ()
 throwIfJsError e = case (toEnum . fromIntegral $ e) of
   JsNoError -> pure () -- No exception
   _ -> do
     -- Grab the exception string from the runtime and throw it
-    exc <- jsGetAndClearException
-    excStrVal <- jsConvertValueToString exc
-    excStr <- unsafeExtractJsString excStrVal
-    jsSetException exc -- Don't clear the exception
-    throwString excStr -- Toss
+    (errCode, exc) <- jsGetAndClearException
+    case errCode of
+      JsNoError -> do
+        excStrVal <- jsConvertValueToString exc
+        excStr <- unsafeExtractJsString excStrVal
+        jsSetException exc -- Don't clear the exception
+        putStrLn excStr
+        throwString excStr -- Toss
+      JsErrorInvalidArgument -> do
+        -- The runtime is actually not in an exception state, but we made a bad func call
+        throwString $ "An error code was raised during a Chakra function call: "
+          ++ show @JsErrorCode (toEnum . fromIntegral $ e)
+      _ -> do
+        throwString $ "An exception occurred during the handling of an earlier exception: " ++ show errCode
 
 {#enum JsErrorCode {} deriving (Eq, Show) #}
 {#enum JsValueType {} deriving (Eq, Show) #}
@@ -103,13 +123,31 @@ jsEmptyContext = Raw.nullPtr
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
-{#fun JsGetAndClearException as ^
+{#fun JsGetValueType as ^
+ {`JsValueRef',
+  alloca- `JsValueType' peekJsType*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsGetUndefinedValue as ^
  {alloca- `JsValueRef' peek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
+{#fun JsGetAndClearException as ^
+ {alloca- `JsValueRef' peek*
+} -> `JsErrorCode'
+ #}
+
 {#fun JsSetException as ^
  {`JsValueRef'
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsCallFunction as ^
+ {`JsValueRef',
+  splatArray* `[JsValueRef]'&,
+  alloca- `JsValueRef' peek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 

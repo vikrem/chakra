@@ -31,6 +31,7 @@ library
   hs-source-dirs:      src
   exposed-modules:     Chakra
   other-modules:       Raw
+                     , Types
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , async
