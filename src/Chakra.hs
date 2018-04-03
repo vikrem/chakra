@@ -23,9 +23,12 @@ boundedWait f = asyncBound f >>= wait
 
 someFunc :: IO ()
 someFunc = do
-  s <- runChakra $ chakraEval "(function(){ return 3 + 15 + 12; })();"
-  putStrLn s
+  res <- runChakra $ do
+    chakraEval "(function(){ return 3 + 15 + 12; })();"
+  print res
 
+-- This function should be the only thing to ever escape Chakra.
+-- No occurrences of `unChakra` should exist, except here.
 runChakra :: Chakra a -> IO a
 runChakra MkChakra{..} = boundedWait $
   bracket
@@ -45,12 +48,13 @@ teardownChakra rt = do
   jsSetCurrentContext jsEmptyContext
   jsDisposeRuntime rt
 
-chakraEval :: String -> Chakra String
-chakraEval src = MkChakra $ do
-    script <- jsCreateString src
-    source <- jsCreateString "[runScript]"
-    ret <- jsRun script 0 source JsParseScriptAttributeNone
-    jsConvertToString ret
+chakraEval :: String -> Chakra JsValue
+chakraEval src = do
+  retobj <- MkChakra $ do
+      script <- jsCreateString src
+      source <- jsCreateString "[runScript]"
+      jsRun script 0 source JsParseScriptAttributeNone
+  wrapJsValue retobj
 
 jsConvertToString :: JsValueRef -> IO String
 jsConvertToString ref = do
