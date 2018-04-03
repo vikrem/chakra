@@ -35,23 +35,14 @@ jsUndefined = MkJsValue "undefined"
 wrapJsValue :: JsValueRef -> Chakra JsValue
 wrapJsValue ref = MkChakra $ do
   -- Fetch JSON.serialize
-  inpTyp <- jsGetValueType ref
-  putStrLn $ "Wrapping an obj of type: " ++ show inpTyp
   script <- jsCreateString "(function () { return JSON.stringify; })();"
   source <- jsCreateString "[wrapJsValue]"
-  func <- jsRun script 1 source JsParseScriptAttributeNone
-  funcT <- jsGetValueType func
-  funcS <- jsConvertValueToString func
-  fs <- unsafeExtractJsString funcS
-  putStrLn $ "Evald func fetch with: " ++ fs
-  putStrLn $ "Evald func fetch with type: " ++ show funcT
-  undef <- jsGetUndefinedValue
-  mybstr <- jsCallFunction func [undef, ref]
-  objTyp <- jsGetValueType mybstr
-  putStrLn $ "Evald serial with type: " ++ show objTyp
+  -- Run it against our ref
+  -- First arg is 'this', so we set it to undefined
+  stringify <- jsRun script 1 source JsParseScriptAttributeNone
+  mybstr <- jsGetUndefinedValue >>= \u -> jsCallFunction stringify [u, ref]
   serialObj <- jsConvertValueToString mybstr
   s <- unsafeExtractJsString serialObj
-  putStrLn $ "Final serial: " ++ s
   return $ MkJsValue $ BS8.pack s
 
 instance Show JsValue where

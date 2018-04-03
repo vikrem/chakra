@@ -56,8 +56,3 @@ unsafeChakraEval src = MkChakra $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
-
--- jsConvertToString :: JsValueRef -> IO String
--- jsConvertToString ref = do
---   str_ref <- jsConvertValueToString ref
---   unsafeExtractJsString str_ref

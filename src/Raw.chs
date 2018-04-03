@@ -48,7 +48,6 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
         excStrVal <- jsConvertValueToString exc
         excStr <- unsafeExtractJsString excStrVal
         jsSetException exc -- Don't clear the exception
-        putStrLn excStr
         throwString excStr -- Toss
       JsErrorInvalidArgument -> do
         -- The runtime is actually not in an exception state, but we made a bad func call
