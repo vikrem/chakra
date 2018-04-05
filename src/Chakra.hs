@@ -14,6 +14,8 @@ import Types
 import Raw
 import Control.Concurrent.Async
 import Control.Exception.Safe
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Resource
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.IO.Class
@@ -34,7 +36,7 @@ runChakra MkChakra{..} = boundedWait $
   bracket
     setupChakra
     teardownChakra
-    (const unChakra)
+    (const $ runResourceT unChakra)
 
 setupChakra :: IO JsRuntimeHandle
 setupChakra = do
@@ -52,7 +54,7 @@ chakraEval :: String -> Chakra JsValue
 chakraEval = unsafeChakraEval >=> wrapJsValue
 
 unsafeChakraEval :: String -> Chakra JsValueRef
-unsafeChakraEval src = MkChakra $ do
+unsafeChakraEval src = MkChakra $ lift $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone

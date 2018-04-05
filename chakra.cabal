@@ -39,6 +39,7 @@ library
                      , inline-c
                      , mtl
                      , random
+                     , resourcet
                      , safe-exceptions
                      , text
                      , transformers

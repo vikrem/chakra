@@ -2,6 +2,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 
 #include "ChakraCommon.h"
 #include "ChakraCoreVersion.h"
@@ -62,6 +63,16 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
 {#enum JsParseScriptAttributes {} deriving (Eq, Show) #}
 
 type JsSourceContext = {#type JsSourceContext #}
+type JsNativeFunction = {#type JsNativeFunction #}
+type JsUnwrappedNativeFunction =
+      (JsValueRef -- callee
+     -> CInt -- isConstructCall
+     -> Ptr JsValueRef -- Arguments
+     -> CUShort -- Arg len
+     -> Ptr () -- Callback State
+     -> IO (JsValueRef)) -- Retval
+
+foreign import ccall "wrapper" mkJsNativeFunction :: JsUnwrappedNativeFunction -> IO JsNativeFunction
 
 jsEmptyContext :: JsContextRef
 jsEmptyContext = Raw.nullPtr
