@@ -30,6 +30,9 @@ nullFunPtr = Foreign.Ptr.nullFunPtr
 withNullFunPtr :: a -> (FunPtr b -> IO c) -> IO c
 withNullFunPtr _ f = f Foreign.Ptr.nullFunPtr
 
+withNullPtr :: a -> (Ptr b -> IO c) -> IO c
+withNullPtr _ f = f Foreign.Ptr.nullPtr
+
 -- use [a] for C calling convention (*a, size_t len)
 splatArray :: Storable a => [a] -> ((Ptr a, CUShort) -> IO b) -> IO b
 splatArray arr fn = do
@@ -73,6 +76,9 @@ type JsUnwrappedNativeFunction =
      -> IO (JsValueRef)) -- Retval
 
 foreign import ccall "wrapper" mkJsNativeFunction :: JsUnwrappedNativeFunction -> IO JsNativeFunction
+
+freeJsNativeFunction :: JsNativeFunction -> IO ()
+freeJsNativeFunction = freeHaskellFunPtr
 
 jsEmptyContext :: JsContextRef
 jsEmptyContext = Raw.nullPtr
@@ -157,6 +163,25 @@ jsEmptyContext = Raw.nullPtr
 {#fun JsCallFunction as ^
  {`JsValueRef',
   splatArray* `[JsValueRef]'&,
+  alloca- `JsValueRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsSetIndexedProperty as ^
+ {`JsValueRef',
+  `JsValueRef',
+  `JsValueRef'
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsGetGlobalObject as ^
+ {alloca- `JsValueRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsCreateFunction as ^
+ {id `JsNativeFunction',
+  withNullPtr* `()',
   alloca- `JsValueRef' peek*
 } -> `JsErrorCode' throwIfJsError*-
  #}

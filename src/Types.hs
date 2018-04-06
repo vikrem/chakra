@@ -7,6 +7,7 @@ module Types (
   JsValue,
   ToJSValue(..),
   FromJSValue(..),
+  JsTypeable(..),
   wrapJsValue,
   jsNull,
   jsUndefined
@@ -79,15 +80,26 @@ type family GetInpTypeLen xs :: Nat where
 class JsTypeable a where
   type JsType a
   cWrapper :: a -> Chakra JsNativeFunction
-  cWrapper fn = MkChakra $ lift $ mkJsNativeFunction $ cBare fn
+  cWrapper fn = MkChakra $ do
+    -- Register GC for funptr
+    (_, ptr) <- allocate
+      (mkJsNativeFunction $ cBare fn)
+      freeJsNativeFunction
+    return ptr
   cBare :: a -> JsUnwrappedNativeFunction
 
 instance ToJSValue a => JsTypeable (IO a) where
   type JsType (IO a) = JsFnTypelist '[] a
   -- ignore all args, we just want to return a value
   cBare r = \_ _ _ _ _ -> do
-    v <- toJSValue <$> r
-    undefined -- TODO
+    (MkJsValue json) <- toJSValue <$> r
+    jsons <- jsCreateString $ BS8.unpack json
+    -- Fetch JSON.parse
+    script <- jsCreateString "(function () { return JSON.parse; })();"
+    source <- jsCreateString "[unwrapJsValue]"
+    parsefn <- jsRun script 1 source JsParseScriptAttributeNone
+    -- parse and return resulting object
+    jsGetUndefinedValue >>= \u -> jsCallFunction parsefn [u, jsons]
 
 instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
   type JsType (a -> b) = AddInpType a (JsType b)

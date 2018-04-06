@@ -6,6 +6,7 @@ module Chakra (
   someFunc,
   runChakra,
   chakraEval,
+  injectChakra,
   Chakra
               )
 where
@@ -58,3 +59,13 @@ unsafeChakraEval src = MkChakra $ lift $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
+
+
+injectChakra :: JsTypeable a => a -> String -> Chakra ()
+injectChakra fn name = do
+  fnWrap <- cWrapper fn
+  MkChakra $ lift $ do
+    gObj <- jsGetGlobalObject
+    nameObj <- jsCreateString name
+    fnObj <- jsCreateFunction fnWrap ()
+    jsSetIndexedProperty gObj nameObj fnObj
