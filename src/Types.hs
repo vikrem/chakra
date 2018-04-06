@@ -17,6 +17,7 @@ import Raw
 import Data.Aeson
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
+import Control.Exception.Safe
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Char8 as BS8
@@ -92,16 +93,21 @@ class JsTypeable a where
   cWrapper fn = MkChakra $ do
     -- Register GC for funptr
     (_, ptr) <- allocate
-      (mkJsNativeFunction $ dropFirstArg $ cBare fn)
+      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare fn)
       freeJsNativeFunction
     return ptr
   cBare :: a -> JsUnwrappedNativeFunction
+
 -- The first argument passed to a native function is 'this'.
 -- This is used to drop it
-
 dropFirstArg :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
 dropFirstArg f = \a b arr argCount c ->
   f a b (advancePtr arr 1) (argCount - 1) c
+
+-- Safely capture native exceptions and return them to js
+wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
+wrapException f = \a b c d e -> f a b c d e `catchDeep` \(e :: SomeException) -> do
+  unsafeThrowJsError $ displayException e
 
 instance ToJSValue a => JsTypeable (IO a) where
   type JsType (IO a) = JsFnTypelist '[] a
@@ -121,15 +127,16 @@ instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
   cBare fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
-      Nothing -> throwJsError "Expecting further arguments to function. Not enough provided?"
+      Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
       Just p -> do
         conv <- fromJSValue @a <$> unsafeWrapJsValue p
         case conv of
-          Nothing -> throwJsError "Conversion error when reading a function argument"
+          Nothing -> unsafeThrowJsError "Conversion error when reading a function argument"
           Just c -> cBare (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
-    where
-      throwJsError str = do
-        errMsg <- jsCreateString $ "Error in native call: " ++ str
-        err <- jsCreateError errMsg
-        jsSetException err
-        jsGetUndefinedValue
+
+unsafeThrowJsError :: String -> IO JsValueRef
+unsafeThrowJsError str = do
+  errMsg <- jsCreateString $ "Error in native call: " ++ str
+  err <- jsCreateError errMsg
+  jsSetException err
+  jsGetUndefinedValue
