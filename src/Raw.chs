@@ -186,6 +186,12 @@ jsEmptyContext = Raw.nullPtr
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
+{#fun JsCreateError as ^
+ {`JsValueRef',
+  alloca- `JsValueRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
 -- val MUST BE A JS STRING !
 unsafeExtractJsString :: JsValueRef -> IO String
 unsafeExtractJsString val = do

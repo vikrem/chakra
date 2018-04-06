@@ -22,6 +22,8 @@ import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 
+import Foreign.Marshal.Array
+
 import GHC.TypeLits
 import Data.Proxy
 
@@ -32,14 +34,18 @@ newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicati
 -- allowing them to be pure and to escape Chakra.
 newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
 
+safeHead :: [a] -> Maybe a
+safeHead [] = Nothing
+safeHead (x:xs) = Just x
+
 jsNull :: JsValue
 jsNull = MkJsValue "null"
 
 jsUndefined :: JsValue
 jsUndefined = MkJsValue "undefined"
 
-wrapJsValue :: JsValueRef -> Chakra JsValue
-wrapJsValue ref = MkChakra $ lift $ do
+unsafeWrapJsValue :: JsValueRef -> IO JsValue
+unsafeWrapJsValue ref = do
   -- Fetch JSON.serialize
   script <- jsCreateString "(function () { return JSON.stringify; })();"
   source <- jsCreateString "[wrapJsValue]"
@@ -52,6 +58,9 @@ wrapJsValue ref = MkChakra $ lift $ do
   -- Fetch str
   s <- unsafeExtractJsString serialObj
   return $ MkJsValue $ BS8.pack s
+
+wrapJsValue :: JsValueRef -> Chakra JsValue
+wrapJsValue ref = MkChakra $ lift $ unsafeWrapJsValue ref
 
 instance Show JsValue where
   show :: JsValue -> String
@@ -83,10 +92,16 @@ class JsTypeable a where
   cWrapper fn = MkChakra $ do
     -- Register GC for funptr
     (_, ptr) <- allocate
-      (mkJsNativeFunction $ cBare fn)
+      (mkJsNativeFunction $ dropFirstArg $ cBare fn)
       freeJsNativeFunction
     return ptr
   cBare :: a -> JsUnwrappedNativeFunction
+-- The first argument passed to a native function is 'this'.
+-- This is used to drop it
+
+dropFirstArg :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
+dropFirstArg f = \a b arr argCount c ->
+  f a b (advancePtr arr 1) (argCount - 1) c
 
 instance ToJSValue a => JsTypeable (IO a) where
   type JsType (IO a) = JsFnTypelist '[] a
@@ -103,4 +118,18 @@ instance ToJSValue a => JsTypeable (IO a) where
 
 instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
   type JsType (a -> b) = AddInpType a (JsType b)
-  cBare = undefined
+  cBare fn = \callee isConstruct argArr argCount cbState -> do
+    headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
+    case headParam of
+      Nothing -> throwJsError "Expecting further arguments to function. Not enough provided?"
+      Just p -> do
+        conv <- fromJSValue @a <$> unsafeWrapJsValue p
+        case conv of
+          Nothing -> throwJsError "Conversion error when reading a function argument"
+          Just c -> cBare (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
+    where
+      throwJsError str = do
+        errMsg <- jsCreateString $ "Error in native call: " ++ str
+        err <- jsCreateError errMsg
+        jsSetException err
+        jsGetUndefinedValue
