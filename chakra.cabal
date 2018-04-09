@@ -55,6 +55,7 @@ library
     include-dirs: vendor/ChakraCoreFiles_1_8_2_Linux/include
   includes: ChakraCommon.h ChakraCoreVersion.h ChakraDebug.h ChakraCore.h
   extra-libraries: ChakraCore
+  extra-lib-dirs: /usr/local/lib/
   default-extensions: BangPatterns
                     , ConstraintKinds
                     , DataKinds
