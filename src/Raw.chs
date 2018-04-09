@@ -174,6 +174,13 @@ jsEmptyContext = Raw.nullPtr
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
+{#fun JsGetIndexedProperty as ^
+ {`JsValueRef',
+  `JsValueRef',
+  alloca- `JsValueRef' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
 {#fun JsGetGlobalObject as ^
  {alloca- `JsValueRef' peek*
 } -> `JsErrorCode' throwIfJsError*-

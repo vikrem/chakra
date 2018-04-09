@@ -7,6 +7,10 @@ module Chakra (
   runChakra,
   chakraEval,
   injectChakra,
+  fromJSValue,
+  toJSValue,
+  jsNull,
+  jsUndefined,
   Chakra
               )
 where
@@ -60,12 +64,20 @@ unsafeChakraEval src = MkChakra $ lift $ do
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
 
-
-injectChakra :: JsTypeable a => a -> String -> Chakra ()
-injectChakra fn name = do
+injectChakra :: JsTypeable a => a -> [String] -> String -> Chakra ()
+injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
   MkChakra $ lift $ do
     gObj <- jsGetGlobalObject
+    nameSpace <- walkProps gObj namespaces
     nameObj <- jsCreateString name
     fnObj <- jsCreateFunction fnWrap ()
-    jsSetIndexedProperty gObj nameObj fnObj
+    jsSetIndexedProperty nameSpace nameObj fnObj
+  where
+    walkProps :: JsValueRef -> [String] -> IO JsValueRef
+    walkProps obj [] = return obj
+    walkProps obj (x:xs) = (do
+        nameObj <- jsCreateString x
+        nextObj <- jsGetIndexedProperty obj nameObj
+        walkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
+      throwString $ "An exception occurred during function injection: " ++ displayException e
