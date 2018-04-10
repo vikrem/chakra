@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Types (
   Chakra(..),
@@ -15,6 +16,7 @@ module Types (
 
 import Raw
 import Data.Aeson
+import Data.Monoid ((<>))
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
 import Control.Exception.Safe
@@ -26,7 +28,6 @@ import qualified Data.ByteString.Lazy.Char8 as BSL8
 import Foreign.Marshal.Array
 
 import GHC.TypeLits
-import Data.Proxy
 
 -- An IO exec environment that requires a bound, running js context to the current os thread
 newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad)
@@ -37,7 +38,7 @@ newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
-safeHead (x:xs) = Just x
+safeHead (x:_) = Just x
 
 jsNull :: JsValue
 jsNull = MkJsValue "null"
@@ -58,7 +59,7 @@ unsafeWrapJsValue ref = do
   serialObj <- jsConvertValueToString mybstr
   -- Fetch str
   s <- unsafeExtractJsString serialObj
-  return $ MkJsValue $ BS8.pack s
+  return $ MkJsValue $ T.encodeUtf8 s
 
 wrapJsValue :: JsValueRef -> Chakra JsValue
 wrapJsValue ref = MkChakra $ lift $ unsafeWrapJsValue ref
@@ -106,15 +107,15 @@ dropFirstArg f = \a b arr argCount c ->
 
 -- Safely capture native exceptions and return them to js
 wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
-wrapException f = \a b c d e -> f a b c d e `catchDeep` \(e :: SomeException) -> do
-  unsafeThrowJsError $ displayException e
+wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -> do
+  unsafeThrowJsError $ T.pack $ displayException ex
 
 instance ToJSValue a => JsTypeable (IO a) where
   type JsType (IO a) = JsFnTypelist '[] a
   -- ignore all args, we just want to return a value
   cBare r = \_ _ _ _ _ -> do
     (MkJsValue json) <- toJSValue <$> r
-    jsons <- jsCreateString $ BS8.unpack json
+    jsons <- jsCreateString $ T.decodeUtf8 json
     -- Fetch JSON.parse
     script <- jsCreateString "(function () { return JSON.parse; })();"
     source <- jsCreateString "[unwrapJsValue]"
@@ -129,14 +130,14 @@ instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
     case headParam of
       Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
       Just p -> do
-        conv <- fromJSValue @a <$> unsafeWrapJsValue p
+        (conv :: Maybe a) <- fromJSValue <$> unsafeWrapJsValue p
         case conv of
           Nothing -> unsafeThrowJsError "Conversion error when reading a function argument"
           Just c -> cBare (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
-unsafeThrowJsError :: String -> IO JsValueRef
+unsafeThrowJsError :: T.Text -> IO JsValueRef
 unsafeThrowJsError str = do
-  errMsg <- jsCreateString $ "Error in native call: " ++ str
+  errMsg <- jsCreateString $ "Error in native call: " <> str
   err <- jsCreateError errMsg
   jsSetException err
   jsGetUndefinedValue

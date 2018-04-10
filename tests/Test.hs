@@ -86,8 +86,8 @@ testRefl Proxy = testProperty (typeName ++ "s can pass between HS and JS") $ typ
 
 typeRefl :: forall a. CanGenRefl a => Proxy a -> Property IO
 typeRefl _ = forAll $ \(x :: a) -> monadic $ do
-    let jsSerial = (T.unpack . T.decodeUtf8 . BSL.toStrict . encode $ x)
-    let evalStr = "(" ++ jsSerial ++ ")"
+    let jsSerial = (T.decodeUtf8 . BSL.toStrict . encode $ x)
+    let evalStr = "(" <> jsSerial <> ")"
     let hsFunc = return x :: IO a
     let callStr = "(f())"
     (Just direct_ref) <- fromJSValue <$> runChakra (chakraEval evalStr)

@@ -21,6 +21,9 @@ import Foreign.ForeignPtr
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 
+import qualified Data.Text as T
+import qualified Data.Text.Foreign as T
+
 mNullPtr :: Ptr a -> IO (Ptr b)
 mNullPtr = return . const Foreign.Ptr.nullPtr
 
@@ -32,6 +35,9 @@ withNullFunPtr _ f = f Foreign.Ptr.nullFunPtr
 
 withNullPtr :: a -> (Ptr b -> IO c) -> IO c
 withNullPtr _ f = f Foreign.Ptr.nullPtr
+
+withText :: T.Text -> ((Ptr CChar, CULong) -> IO a) -> IO a
+withText t fn = T.withCStringLen t $ \(p, len) -> fn (p, fromIntegral len)
 
 -- use [a] for C calling convention (*a, size_t len)
 splatArray :: Storable a => [a] -> ((Ptr a, CUShort) -> IO b) -> IO b
@@ -52,7 +58,7 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
         excStrVal <- jsConvertValueToString exc
         excStr <- unsafeExtractJsString excStrVal
         jsSetException exc -- Don't clear the exception
-        throwString excStr -- Toss
+        throwString $ T.unpack excStr -- Toss
       JsErrorInvalidArgument -> do
         -- The runtime is actually not in an exception state, but we made a bad func call
         throwString $ "An error code was raised during a Chakra function call: "
@@ -77,8 +83,19 @@ type JsUnwrappedNativeFunction =
 
 foreign import ccall "wrapper" mkJsNativeFunction :: JsUnwrappedNativeFunction -> IO JsNativeFunction
 
+type JsPromiseContinuationCallback = {#type JsPromiseContinuationCallback #}
+type JsUnwrappedPromiseContinuationCallback =
+  (JsValueRef -- Task
+  -> Ptr () -- Void data
+  -> IO ())
+
+foreign import ccall "wrapper" mkJsPromiseCallback :: JsUnwrappedPromiseContinuationCallback -> IO JsPromiseContinuationCallback
+
 freeJsNativeFunction :: JsNativeFunction -> IO ()
 freeJsNativeFunction = freeHaskellFunPtr
+
+freeJsPromiseCallback :: JsPromiseContinuationCallback -> IO ()
+freeJsPromiseCallback = freeHaskellFunPtr
 
 jsEmptyContext :: JsContextRef
 jsEmptyContext = Raw.nullPtr
@@ -106,7 +123,7 @@ jsEmptyContext = Raw.nullPtr
  #}
 
 {#fun JsCreateString as ^
- {`String'&,
+ {withText* `T.Text'&,
   alloca- `JsValueRef' peek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
@@ -199,10 +216,28 @@ jsEmptyContext = Raw.nullPtr
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
+{#fun JsAddRef as ^
+ {`JsValueRef',
+  alloca- `CUInt' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsRelease as ^
+ {`JsValueRef',
+  alloca- `CUInt' peek*
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
+{#fun JsSetPromiseContinuationCallback as ^
+ {id `JsPromiseContinuationCallback',
+  withNullPtr* `()'
+} -> `JsErrorCode' throwIfJsError*-
+ #}
+
 -- val MUST BE A JS STRING !
-unsafeExtractJsString :: JsValueRef -> IO String
+unsafeExtractJsString :: JsValueRef -> IO T.Text
 unsafeExtractJsString val = do
   strLen <- jsCopyString val Raw.nullPtr 0
   allocaBytes (fromIntegral strLen) $ \p -> do
     jsCopyString val p strLen
-    peekCStringLen (p, fromIntegral strLen)
+    T.peekCStringLen (p, fromIntegral strLen)

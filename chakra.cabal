@@ -36,11 +36,11 @@ library
                      , aeson
                      , async
                      , bytestring
-                     , inline-c
                      , mtl
                      , random
                      , resourcet
                      , safe-exceptions
+                     , stm
                      , text
                      , transformers
                      , unordered-containers

@@ -3,7 +3,6 @@
 {-# LANGUAGE PolyKinds #-}
 
 module Chakra (
-  someFunc,
   runChakra,
   chakraEval,
   injectChakra,
@@ -15,33 +14,39 @@ module Chakra (
               )
 where
 
-import Types
-import Raw
+
 import Control.Concurrent.Async
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TChan
 import Control.Exception.Safe
+import Control.Monad
+import Control.Monad.IO.Class
+import Control.Monad.Identity
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
-import Control.Monad
-import Control.Monad.Identity
-import Control.Monad.IO.Class
+import Data.IORef
+import Foreign.Ptr
+import qualified Data.Text as T
+
+import Raw
+import Types
 
 boundedWait :: IO a -> IO a
 boundedWait f = asyncBound f >>= wait
 
-someFunc :: IO ()
-someFunc = do
-  res <- runChakra $ do
-    chakraEval "(function(){ return 3 + 15 + 12; })();"
-  print res
-
 -- This function should be the only thing to ever escape Chakra.
 -- No occurrences of `unChakra` should exist, except here.
-runChakra :: Chakra a -> IO a
-runChakra MkChakra{..} = boundedWait $
-  bracket
-    setupChakra
-    teardownChakra
-    (const $ runResourceT unChakra)
+runChakra :: Chakra JsValue -> IO JsValue
+runChakra chk = boundedWait $ runResourceT $ do
+  allocate setupChakra teardownChakra
+  promiseQueue <- lift $ atomically newTChan
+  (_, promisePtr) <- allocate
+    (mkJsPromiseCallback $ pushPromise promiseQueue)
+    freeJsPromiseCallback
+  lift $ jsSetPromiseContinuationCallback promisePtr ()
+  r <- unChakra chk >>= \v -> lift $ newIORef v
+  unChakra $ evalPromises promiseQueue r
+  lift $ readIORef r
 
 setupChakra :: IO JsRuntimeHandle
 setupChakra = do
@@ -55,16 +60,30 @@ teardownChakra rt = do
   jsSetCurrentContext jsEmptyContext
   jsDisposeRuntime rt
 
-chakraEval :: String -> Chakra JsValue
+pushPromise :: TChan JsValueRef -> JsValueRef -> Ptr () -> IO ()
+pushPromise chan ref _ = jsAddRef ref >> atomically (writeTChan chan ref)
+
+evalPromises :: TChan JsValueRef -> IORef JsValue -> Chakra ()
+evalPromises chan ref = MkChakra $ lift $ atomically (tryReadTChan chan) >>= \case
+  Nothing -> pure ()
+  Just val -> do
+    gObj <- jsGetGlobalObject
+    barejsval <- jsCallFunction val [gObj]
+    wrappedval <- runResourceT $ unChakra $ wrapJsValue barejsval
+    liftIO $ writeIORef ref wrappedval
+    liftIO $ jsRelease barejsval
+    runResourceT $ unChakra $ evalPromises chan ref
+
+chakraEval :: T.Text -> Chakra JsValue
 chakraEval = unsafeChakraEval >=> wrapJsValue
 
-unsafeChakraEval :: String -> Chakra JsValueRef
+unsafeChakraEval :: T.Text -> Chakra JsValueRef
 unsafeChakraEval src = MkChakra $ lift $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
 
-injectChakra :: JsTypeable a => a -> [String] -> String -> Chakra ()
+injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
 injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
   MkChakra $ lift $ do
@@ -74,7 +93,7 @@ injectChakra fn namespaces name = do
     fnObj <- jsCreateFunction fnWrap ()
     jsSetIndexedProperty nameSpace nameObj fnObj
   where
-    walkProps :: JsValueRef -> [String] -> IO JsValueRef
+    walkProps :: JsValueRef -> [T.Text] -> IO JsValueRef
     walkProps obj [] = return obj
     walkProps obj (x:xs) = (do
         nameObj <- jsCreateString x
