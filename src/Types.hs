@@ -2,6 +2,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 
 module Types (
   Chakra(..),
@@ -9,6 +10,9 @@ module Types (
   ToJSValue(..),
   FromJSValue(..),
   JsTypeable(..),
+  JsPromise,
+  promiseReject,
+  promiseResolve,
   wrapJsValue,
   jsNull,
   jsUndefined
@@ -17,9 +21,11 @@ module Types (
 import Raw
 import Data.Aeson
 import Data.Monoid ((<>))
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
 import Control.Exception.Safe
+import Control.Concurrent.Async
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Char8 as BS8
@@ -30,15 +36,28 @@ import Foreign.Marshal.Array
 import GHC.TypeLits
 
 -- An IO exec environment that requires a bound, running js context to the current os thread
-newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad)
+newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
 -- JS Values that have no ties to any `JsValueRef`s
 -- This is to let you read them without IO or a Chakra context.
 -- allowing them to be pure and to escape Chakra.
 newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
 
+data JsPromise a b where
+  PromiseResolve :: b -> JsPromise a b
+  PromiseReject :: a -> JsPromise a b
+
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
 safeHead (x:_) = Just x
+
+void :: Monad m => m a -> m ()
+void f = f >> pure ()
+
+promiseResolve :: b -> JsPromise a b
+promiseResolve = PromiseResolve
+
+promiseReject :: a -> JsPromise a b
+promiseReject = PromiseReject
 
 jsNull :: JsValue
 jsNull = MkJsValue "null"
@@ -88,8 +107,12 @@ type family AddInpType n m where
 type family GetInpTypeLen xs :: Nat where
   GetInpTypeLen (JsFnTypelist '[] o) = 0
 
+type family JsType a where
+  --JsType (IO (Async (Either a b))) = JsFnTypelist '[] (Either a b)
+  JsType (IO a) = JsFnTypelist '[] a
+  JsType (a -> b) = AddInpType a (JsType b)
+
 class JsTypeable a where
-  type JsType a
   cWrapper :: a -> Chakra JsNativeFunction
   cWrapper fn = MkChakra $ do
     -- Register GC for funptr
@@ -111,20 +134,32 @@ wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -
   unsafeThrowJsError $ T.pack $ displayException ex
 
 instance ToJSValue a => JsTypeable (IO a) where
-  type JsType (IO a) = JsFnTypelist '[] a
   -- ignore all args, we just want to return a value
   cBare r = \_ _ _ _ _ -> do
-    (MkJsValue json) <- toJSValue <$> r
-    jsons <- jsCreateString $ T.decodeUtf8 json
-    -- Fetch JSON.parse
-    script <- jsCreateString "(function () { return JSON.parse; })();"
-    source <- jsCreateString "[unwrapJsValue]"
-    parsefn <- jsRun script 1 source JsParseScriptAttributeNone
-    -- parse and return resulting object
-    jsGetUndefinedValue >>= \u -> jsCallFunction parsefn [u, jsons]
+    r >>= unsafeMakeJsValueRef . toJSValue
+
+instance {-# OVERLAPS #-} (ToJSValue a, ToJSValue b) => JsTypeable (IO (JsPromise a b)) where
+  -- ignore all args, we just want to return a value
+  cBare r = \_ _ _ _ _ -> do
+    (promise, accept, reject) <- jsCreatePromise
+    sequence_ $ jsAddRef <$> [promise, accept, reject]
+    gObj <- jsGetGlobalObject
+    evalPromise gObj accept reject
+      `catchAny` \(e :: SomeException) -> do
+        ref <- unsafeMakeJsValueRef . toJSValue $ displayException e
+        void $ jsCallFunction reject [gObj, ref]
+      `finally` (sequence_ $ jsRelease <$> [promise, accept, reject])
+    return promise
+    where
+      evalPromise gObj accept reject = r >>= \case
+        PromiseReject err -> do
+          ref <- unsafeMakeJsValueRef $ toJSValue err
+          void $ jsCallFunction reject [gObj, ref]
+        PromiseResolve succ -> do
+          ref <- unsafeMakeJsValueRef $ toJSValue succ
+          void $ jsCallFunction accept [gObj, ref]
 
 instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
-  type JsType (a -> b) = AddInpType a (JsType b)
   cBare fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
@@ -141,3 +176,13 @@ unsafeThrowJsError str = do
   err <- jsCreateError errMsg
   jsSetException err
   jsGetUndefinedValue
+
+unsafeMakeJsValueRef :: JsValue -> IO JsValueRef
+unsafeMakeJsValueRef (MkJsValue json) = do
+    jsons <- jsCreateString $ T.decodeUtf8 json
+    -- Fetch JSON.parse
+    script <- jsCreateString "(function () { return JSON.parse; })();"
+    source <- jsCreateString "[unwrapJsValue]"
+    parsefn <- jsRun script 1 source JsParseScriptAttributeNone
+    -- parse and return resulting object
+    jsGetUndefinedValue >>= \u -> jsCallFunction parsefn [u, jsons]

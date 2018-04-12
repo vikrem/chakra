@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 
@@ -10,6 +9,13 @@ module Chakra (
   toJSValue,
   jsNull,
   jsUndefined,
+  JsValue,
+  JsTypeable,
+  FromJSValue,
+  ToJSValue,
+  JsPromise,
+  promiseResolve,
+  promiseReject,
   Chakra
               )
 where
@@ -36,17 +42,14 @@ boundedWait f = asyncBound f >>= wait
 
 -- This function should be the only thing to ever escape Chakra.
 -- No occurrences of `unChakra` should exist, except here.
+
+-- | Executes a Chakra context in IO and returns the resulting JsValue
 runChakra :: Chakra JsValue -> IO JsValue
 runChakra chk = boundedWait $ runResourceT $ do
-  allocate setupChakra teardownChakra
-  promiseQueue <- lift $ atomically newTChan
-  (_, promisePtr) <- allocate
-    (mkJsPromiseCallback $ pushPromise promiseQueue)
-    freeJsPromiseCallback
-  lift $ jsSetPromiseContinuationCallback promisePtr ()
-  r <- unChakra chk >>= \v -> lift $ newIORef v
-  unChakra $ evalPromises promiseQueue r
-  lift $ readIORef r
+  allocate
+    setupChakra
+    teardownChakra
+  unChakra chk
 
 setupChakra :: IO JsRuntimeHandle
 setupChakra = do
@@ -74,8 +77,22 @@ evalPromises chan ref = MkChakra $ lift $ atomically (tryReadTChan chan) >>= \ca
     liftIO $ jsRelease barejsval
     runResourceT $ unChakra $ evalPromises chan ref
 
+-- | Evaluate js code
+--
+-- >>> runChakra $ chakraEval "5 + 3"
+-- 8
 chakraEval :: T.Text -> Chakra JsValue
-chakraEval = unsafeChakraEval >=> wrapJsValue
+chakraEval t = do
+  promiseQueue <- liftIO $ atomically newTChan
+  (promiseKey, promisePtr) <- MkChakra $ allocate
+    (mkJsPromiseCallback $ pushPromise promiseQueue)
+    freeJsPromiseCallback
+  liftIO $ jsSetPromiseContinuationCallback promisePtr ()
+  ref <- unsafeChakraEval t >>= wrapJsValue >>= liftIO . newIORef
+  evalPromises promiseQueue ref
+  release promiseKey
+  liftIO $ jsSetPromiseContinuationCallback Raw.nullFunPtr ()
+  liftIO $ readIORef ref
 
 unsafeChakraEval :: T.Text -> Chakra JsValueRef
 unsafeChakraEval src = MkChakra $ lift $ do
@@ -83,6 +100,10 @@ unsafeChakraEval src = MkChakra $ lift $ do
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
 
+--- | Inject a haskell function into a js environment
+---
+--- >>> runChakra $ injectChakra (\fn -> return (fn ++ "!") :: IO String) [] "f" >>  chakraEval "f('3');"
+--- "3!"
 injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
 injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
