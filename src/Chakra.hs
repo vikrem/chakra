@@ -5,6 +5,7 @@ module Chakra (
   runChakra,
   chakraEval,
   injectChakra,
+  injectChakraPromise,
   fromJSValue,
   toJSValue,
   jsNull,
@@ -109,15 +110,25 @@ injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
   MkChakra $ lift $ do
     gObj <- jsGetGlobalObject
-    nameSpace <- walkProps gObj namespaces
+    nameSpace <- unsafeWalkProps gObj namespaces
     nameObj <- jsCreateString name
     fnObj <- jsCreateFunction fnWrap ()
     jsSetIndexedProperty nameSpace nameObj fnObj
-  where
-    walkProps :: JsValueRef -> [T.Text] -> IO JsValueRef
-    walkProps obj [] = return obj
-    walkProps obj (x:xs) = (do
-        nameObj <- jsCreateString x
-        nextObj <- jsGetIndexedProperty obj nameObj
-        walkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
-      throwString $ "An exception occurred during function injection: " ++ displayException e
+
+injectChakraPromise :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
+injectChakraPromise fn namespaces name = do
+  fnWrap <- cWrapperPromise fn
+  MkChakra $ lift $ do
+    gObj <- jsGetGlobalObject
+    nameSpace <- unsafeWalkProps gObj namespaces
+    nameObj <- jsCreateString name
+    fnObj <- jsCreateFunction fnWrap ()
+    jsSetIndexedProperty nameSpace nameObj fnObj
+
+unsafeWalkProps :: JsValueRef -> [T.Text] -> IO JsValueRef
+unsafeWalkProps obj [] = return obj
+unsafeWalkProps obj (x:xs) = (do
+    nameObj <- jsCreateString x
+    nextObj <- jsGetIndexedProperty obj nameObj
+    unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
+  throwString $ "An exception occurred during function injection: " ++ displayException e
