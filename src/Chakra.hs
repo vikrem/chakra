@@ -5,7 +5,6 @@ module Chakra (
   runChakra,
   chakraEval,
   injectChakra,
-  injectChakraPromise,
   fromJSValue,
   toJSValue,
   jsNull,
@@ -14,11 +13,9 @@ module Chakra (
   JsTypeable,
   FromJSValue,
   ToJSValue,
-  JsPromise,
-  promiseResolve,
-  promiseReject,
+  JsPromise(..),
   Chakra
-              )
+  )
 where
 
 
@@ -108,16 +105,6 @@ unsafeChakraEval src = MkChakra $ lift $ do
 injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
 injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
-  MkChakra $ lift $ do
-    gObj <- jsGetGlobalObject
-    nameSpace <- unsafeWalkProps gObj namespaces
-    nameObj <- jsCreateString name
-    fnObj <- jsCreateFunction fnWrap ()
-    jsSetIndexedProperty nameSpace nameObj fnObj
-
-injectChakraPromise :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
-injectChakraPromise fn namespaces name = do
-  fnWrap <- cWrapperPromise fn
   MkChakra $ lift $ do
     gObj <- jsGetGlobalObject
     nameSpace <- unsafeWalkProps gObj namespaces

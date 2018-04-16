@@ -80,7 +80,10 @@ instance Monad m => Serial m Value
 type CanGenRefl a = (Typeable a, Eq a, FromJSON a, ToJSON a, Serial IO a, Show a)
 
 testRefl :: forall a. CanGenRefl a => Proxy a -> TestTree
-testRefl Proxy = testProperty (typeName ++ "s can pass between HS and JS") $ typeRefl $ Proxy @a
+testRefl _ = testGroup typeName [
+    testProperty (typeName ++ "s can pass between HS and JS via bare function") $ typeRefl $ Proxy @a
+  , testProperty (typeName ++ "s can pass between HS and JS via Promise") $ typePromiseRefl $ Proxy @a
+  ]
   where
     typeName = show $ typeRep $ Proxy @a
 
@@ -93,6 +96,19 @@ typeRefl _ = forAll $ \(x :: a) -> monadic $ do
     (Just direct_ref) <- fromJSValue <$> runChakra (chakraEval evalStr)
     (Just direct_call) <- fromJSValue <$> runChakra (injectChakra hsFunc [] "f" >> chakraEval callStr)
     return $ and $ fmap (== x) [direct_ref, direct_call]
+
+typePromiseRefl :: forall a. CanGenRefl a => Proxy a -> Property IO
+typePromiseRefl _ = forAll $ \(x :: a) -> monadic $ do
+    reportVar <- newIORef Nothing
+    let hsFunc = MkJsPromise $ return x :: JsPromise a
+    let reportFunc = writeIORef reportVar . Just :: a -> IO ()
+    let callStr = "f().then((v) => {r(v)}).catch((e) => {throw e})"
+    runChakra $ do
+      injectChakra hsFunc [] "f"
+      injectChakra reportFunc [] "r"
+      chakraEval callStr
+    (Just extract) <- readIORef reportVar
+    return $ extract == x
 
 hsNamespacedCall :: Assertion
 hsNamespacedCall = do

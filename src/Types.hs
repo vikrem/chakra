@@ -12,9 +12,7 @@ module Types (
   ToJSValue(..),
   FromJSValue(..),
   JsTypeable(..),
-  JsPromise,
-  promiseReject,
-  promiseResolve,
+  JsPromise(..),
   wrapJsValue,
   jsNull,
   jsUndefined
@@ -44,9 +42,7 @@ newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicati
 -- allowing them to be pure and to escape Chakra.
 newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
 
-data JsPromise a b where
-  PromiseResolve :: b -> JsPromise a b
-  PromiseReject :: a -> JsPromise a b
+newtype JsPromise a = MkJsPromise { unJsPromise :: IO a }
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
@@ -57,12 +53,6 @@ void f = f >> pure ()
 
 fix :: (a -> a) -> a
 fix f = f $ fix f
-
-promiseResolve :: b -> JsPromise a b
-promiseResolve = PromiseResolve
-
-promiseReject :: a -> JsPromise a b
-promiseReject = PromiseReject
 
 jsNull :: JsValue
 jsNull = MkJsValue "null"
@@ -125,15 +115,7 @@ class JsTypeable a where
       (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare fn)
       freeJsNativeFunction
     return ptr
-  cWrapperPromise :: a -> Chakra JsNativeFunction
-  cWrapperPromise fn = MkChakra $ do -- TODO: DRY
-    -- Register GC for funptr
-    (_, ptr) <- allocate
-      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBarePromise fn)
-      freeJsNativeFunction
-    return ptr
   cBare :: a -> JsUnwrappedNativeFunction
-  cBarePromise :: a -> JsUnwrappedNativeFunction
 
 -- The first argument passed to a native function is 'this'.
 -- This is used to drop it
@@ -150,7 +132,9 @@ instance ToJSValue a => JsTypeable (IO a) where
   -- ignore all args, we just want to return a value
   cBare r = \_ _ _ _ _ -> do
     r >>= unsafeMakeJsValueRef . toJSValue
-  cBarePromise r = \_ _ _ _ _ -> do
+
+instance ToJSValue a => JsTypeable (JsPromise a) where
+  cBare r = \_ _ _ _ _ -> do
     (promise, accept, reject) <- jsCreatePromise
     sequence_ $ jsAddRef <$> [promise, accept, reject]
     gObj <- jsGetGlobalObject
@@ -161,30 +145,21 @@ instance ToJSValue a => JsTypeable (IO a) where
       `finally` (sequence_ $ jsRelease <$> [promise, accept, reject])
     return promise
     where
-      evalPromise gObj accept = r >>= \val -> do
+      evalPromise gObj accept = unJsPromise r >>= \val -> do
           ref <- unsafeMakeJsValueRef $ toJSValue val
           void $ jsCallFunction accept [gObj, ref]
 
 instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
-  cBarePromise fn = cBareRec (cBarePromise) fn
-  -- TODO: dry. maybe with fixpoint?
   cBare :: (a -> b) -> JsUnwrappedNativeFunction
-  cBare fn = cBareRec (cBare) fn
-
-cBareRec ::
-  (FromJSValue a, JsTypeable b) =>
-  (b -> JsUnwrappedNativeFunction) ->
-  (a -> b) ->
-  JsUnwrappedNativeFunction
-cBareRec fixpoint fn = \callee isConstruct argArr argCount cbState -> do
-  headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
-  case headParam of
-    Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
-    Just p -> do
-      (conv :: Maybe a) <- fromJSValue <$> unsafeWrapJsValue p
-      case conv of
-        Nothing -> unsafeThrowJsError "Conversion error when reading a function argument"
-        Just c -> fixpoint (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
+  cBare fn = \callee isConstruct argArr argCount cbState -> do
+    headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
+    case headParam of
+      Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
+      Just p -> do
+        (conv :: Maybe a) <- fromJSValue <$> unsafeWrapJsValue p
+        case conv of
+          Nothing -> unsafeThrowJsError "Conversion error when reading a function argument"
+          Just c -> cBare (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
 unsafeThrowJsError :: T.Text -> IO JsValueRef
 unsafeThrowJsError str = do
