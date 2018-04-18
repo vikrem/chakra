@@ -30,6 +30,7 @@ tested-with:
 library
   hs-source-dirs:      src
   exposed-modules:     Chakra
+                     , Chakra.Typescript
   other-modules:       Raw
                      , Types
   build-depends:       base >= 4.7 && < 5
@@ -37,6 +38,7 @@ library
                      , async
                      , bytestring
                      , mtl
+                     , protolude
                      , random
                      , resourcet
                      , safe-exceptions

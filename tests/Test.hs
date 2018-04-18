@@ -17,7 +17,6 @@ import Data.Aeson.Types hiding (Series)
 import Data.Aeson hiding (Series)
 
 import Control.Exception.Safe
-import Control.Concurrent.Async
 
 import Data.String
 import Data.IORef

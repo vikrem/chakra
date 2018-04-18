@@ -13,6 +13,8 @@ module Types (
   FromJSValue(..),
   JsTypeable(..),
   JsPromise(..),
+  JsFnTypelist,
+  JsType,
   wrapJsValue,
   jsNull,
   jsUndefined
@@ -42,6 +44,7 @@ newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicati
 -- allowing them to be pure and to escape Chakra.
 newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
 
+-- | A wrapper around an IO action. This is used to inject functions into Chakra that will return Promise objects, rather than a value, to Javascript.
 newtype JsPromise a = MkJsPromise { unJsPromise :: IO a }
 
 safeHead :: [a] -> Maybe a
@@ -51,12 +54,11 @@ safeHead (x:_) = Just x
 void :: Monad m => m a -> m ()
 void f = f >> pure ()
 
-fix :: (a -> a) -> a
-fix f = f $ fix f
-
+-- | a JsValue that represents `null` in Javascript
 jsNull :: JsValue
 jsNull = MkJsValue "null"
 
+-- | a JsValue that represents `undefined` in Javascript
 jsUndefined :: JsValue
 jsUndefined = MkJsValue "undefined"
 
@@ -103,8 +105,8 @@ type family GetInpTypeLen xs :: Nat where
   GetInpTypeLen (JsFnTypelist '[] o) = 0
 
 type family JsType a where
-  --JsType (IO (Async (Either a b))) = JsFnTypelist '[] (Either a b)
   JsType (IO a) = JsFnTypelist '[] a
+  JsType (JsPromise a) = JsFnTypelist '[] (JsPromise a)
   JsType (a -> b) = AddInpType a (JsType b)
 
 class JsTypeable a where
