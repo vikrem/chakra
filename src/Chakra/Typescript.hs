@@ -8,6 +8,7 @@ module Chakra.Typescript where
 import Protolude
 import qualified Data.Text as T
 
+import Data.Aeson.Types (Value)
 import Types
 import Chakra
 
@@ -17,6 +18,7 @@ type family TsType a :: Symbol where
   TsType Int = "number"
   TsType String = "string"
   TsType T.Text = "string"
+  TsType Value = "any"
 
 data TsFunctionDecl = TsFunctionDecl {
   fnName :: T.Text,
