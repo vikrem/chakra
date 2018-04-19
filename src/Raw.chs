@@ -100,6 +100,15 @@ freeJsPromiseCallback = freeHaskellFunPtr
 jsEmptyContext :: JsContextRef
 jsEmptyContext = Raw.nullPtr
 
+
+-- jsAlloca :: (Ptr JsValueRef -> IO b) -> IO b
+-- jsAlloca f = alloca $ \p -> (peek p >>= jsAddRef) >> f p
+
+-- | Peek at a JsValue. This JsValue is managed by Haskell.
+-- We add a reference to prevent the Chakra GC from touching it.
+jsPeek :: Ptr JsValueRef -> IO JsValueRef
+jsPeek p = peek p >>= \ref -> jsAddRef ref >> return ref
+
 {#pointer JsRuntimeHandle #}
 {#pointer JsContextRef #}
 {#pointer JsValueRef #}
@@ -124,7 +133,7 @@ jsEmptyContext = Raw.nullPtr
 
 {#fun JsCreateString as ^
  {withText* `T.Text'&,
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
@@ -133,13 +142,13 @@ jsEmptyContext = Raw.nullPtr
   id `JsSourceContext',
   `JsValueRef',
   `JsParseScriptAttributes',
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
 {#fun JsConvertValueToString as ^
  {`JsValueRef',
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
@@ -163,12 +172,12 @@ jsEmptyContext = Raw.nullPtr
  #}
 
 {#fun JsGetUndefinedValue as ^
- {alloca- `JsValueRef' peek*
+ {alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
 {#fun JsGetAndClearException as ^
- {alloca- `JsValueRef' peek*
+ {alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode'
  #}
 
@@ -180,7 +189,7 @@ jsEmptyContext = Raw.nullPtr
 {#fun JsCallFunction as ^
  {`JsValueRef',
   splatArray* `[JsValueRef]'&,
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
@@ -194,25 +203,25 @@ jsEmptyContext = Raw.nullPtr
 {#fun JsGetIndexedProperty as ^
  {`JsValueRef',
   `JsValueRef',
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
 {#fun JsGetGlobalObject as ^
- {alloca- `JsValueRef' peek*
+ {alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
 {#fun JsCreateFunction as ^
  {id `JsNativeFunction',
   withNullPtr* `()',
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
 {#fun JsCreateError as ^
  {`JsValueRef',
-  alloca- `JsValueRef' peek*
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
@@ -235,9 +244,9 @@ jsEmptyContext = Raw.nullPtr
  #}
 
 {#fun JsCreatePromise as ^
- {alloca- `JsValueRef' peek*,
-  alloca- `JsValueRef' peek*,
-  alloca- `JsValueRef' peek*
+ {alloca- `JsValueRef' jsPeek*,
+  alloca- `JsValueRef' jsPeek*,
+  alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
