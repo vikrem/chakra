@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Chakra.Typescript where
 
@@ -11,21 +12,47 @@ import qualified Data.Text as T
 import Data.Aeson.Types (Value)
 import Types
 import Chakra
+import GHC.TypeLits
+import GHC.Generics
 
-import Data.String (String)
 
 type family TsType a :: Symbol where
   TsType Int = "number"
-  TsType String = "string"
+  TsType Integer = "number"
+  TsType Double = "number"
+  TsType Float = "number"
   TsType T.Text = "string"
   TsType Value = "any"
+  TsType Bool = "true | false"
+  TsType (Maybe a) = AppendSymbol (TsType a) " | null"
+  TsType () = "void"
+  TsType [a] = (AppendSymbol (TsType a) "[]")
+  TsType a = (GTsType (Rep a))
+
+class GHasTsType (r :: * -> *) where
+  type GTsType r :: Symbol
+
+instance GHasTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) where
+  type GTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) = AppendSymbol fieldName (AppendSymbol ": " (TsType typ))
+
+instance GHasTsType b => GHasTsType (D1 a b) where
+  type GTsType (D1 a b) = GTsType b
+
+instance GHasTsType b => GHasTsType (C1 a b) where
+  type GTsType (C1 a b) = AppendSymbol "{ " (AppendSymbol (GTsType b) " }")
+
+instance (GHasTsType a, GHasTsType b) => GHasTsType (a :*: b) where
+  type GTsType (a :*: b) = AppendSymbol (GTsType a) (AppendSymbol ", " (GTsType b))
+
+instance (GHasTsType a, GHasTsType b) => GHasTsType (a :+: b) where
+  type GTsType (a :+: b) = AppendSymbol (GTsType a) (AppendSymbol " | " (GTsType b))
 
 data TsFunctionDecl = TsFunctionDecl {
   fnName :: T.Text,
   fnTypes :: [T.Text],
   fnVarNames :: [T.Text],
   fnRetType :: T.Text
-  } deriving (Show, Eq, Ord)
+  } deriving (Show, Eq, Ord, Generic)
 
 data AnyInjectible = forall a. (HasTSDecl (JsType a), JsTypeable a) => AnyInjectible a
 
