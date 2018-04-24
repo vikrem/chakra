@@ -14,7 +14,8 @@ import Types
 import Chakra
 import GHC.TypeLits
 import GHC.Generics
-
+import Data.Time.Clock (UTCTime)
+import Data.UUID.Types (UUID)
 
 type family TsType a :: Symbol where
   TsType Int = "number"
@@ -24,6 +25,8 @@ type family TsType a :: Symbol where
   TsType T.Text = "string"
   TsType Value = "any"
   TsType Bool = "true | false"
+  TsType UUID = "string"
+  TsType UTCTime = "string"
   TsType (Maybe a) = AppendSymbol (TsType a) " | null"
   TsType () = "void"
   TsType [a] = (AppendSymbol (TsType a) "[]")
@@ -54,7 +57,8 @@ data TsFunctionDecl = TsFunctionDecl {
   fnRetType :: T.Text
   } deriving (Show, Eq, Ord, Generic)
 
-data AnyInjectible = forall a. (HasTSDecl (JsType a), JsTypeable a) => AnyInjectible a
+data Injectible = Namespace T.Text [Injectible] |
+  forall a. (HasTSDecl (JsType a), JsTypeable a) => HsFunc T.Text a
 
 instance Monoid TsFunctionDecl where
   mempty = TsFunctionDecl "" [] [] ""
@@ -81,6 +85,29 @@ instance (KnownSymbol (TsType a),
     where
       typeName = T.pack $ symbolVal $ Proxy @(TsType a)
 
+indentBlock :: T.Text -> T.Text
+indentBlock = T.unlines . map ("  " <>)  . T.lines
+
+printInjectible :: Injectible -> T.Text
+-- TLD declare
+printInjectible (Namespace nsName inj) = "declare " <> printInjectible' (Namespace nsName inj)
+printInjectible x = printInjectible' x
+
+printInjectible' :: Injectible -> T.Text
+printInjectible' (HsFunc name f) = printDecl $ mempty { fnName = name } <> getDecl f
+printInjectible' (Namespace nsName inj) = T.unlines [
+    "namespace " <> nsName <> " {"
+  , T.unlines $ indentBlock . printInjectible' <$> inj
+  , "}"
+  ]
+
+injectInjectible :: Injectible -> Chakra ()
+injectInjectible = injectInjectible' []
+
+injectInjectible' :: [T.Text] -> Injectible -> Chakra ()
+injectInjectible' ns (HsFunc name f) = injectChakra f ns name
+injectInjectible' ns (Namespace name injs) = sequence_ $ injectInjectible' (ns ++ [name]) <$> injs
+
 getDecl :: forall a b. (JsType a ~ b, HasTSDecl b) => a -> TsFunctionDecl
 getDecl _ = tsDecl (Proxy @b)
 
@@ -91,17 +118,3 @@ printDecl TsFunctionDecl{..} =
     argList :: T.Text
     argList = T.intercalate ", " $
       zipWith (\n t -> n <> ": " <> t) (fnVarNames <> (T.singleton <$> ['a'..'z'])) fnTypes
-
-getNamespaceDecl :: T.Text -> [TsFunctionDecl] -> T.Text
-getNamespaceDecl n fns = T.unlines [
-    "declare namespace " <> n <> " {"
-  , "  " <> T.unlines (printDecl <$> fns)
-  , "}"
-  ]
-
-injectNamespace :: T.Text -> [(AnyInjectible, T.Text)] -> (Chakra (), T.Text)
-injectNamespace name fns = (injectAction, decl)
-  where
-    decl = getNamespaceDecl name $
-      (\(AnyInjectible a, funcName) -> mempty {fnName = funcName} <> getDecl a) <$> fns
-    injectAction = sequence_ $ (\(AnyInjectible a, funcName) -> injectChakra a [name] funcName) <$> fns
