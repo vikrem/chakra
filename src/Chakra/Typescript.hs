@@ -3,6 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE PolyKinds #-}
 
 module Chakra.Typescript where
 
@@ -17,6 +18,10 @@ import GHC.Generics
 import Data.Time.Clock (UTCTime)
 import Data.UUID.Types (UUID)
 
+
+symtext :: forall a. KnownSymbol a => Proxy a -> T.Text
+symtext _ = T.pack $ symbolVal (Proxy @a)
+
 type family TsType a :: Symbol where
   TsType Int = "number"
   TsType Integer = "number"
@@ -29,6 +34,7 @@ type family TsType a :: Symbol where
   TsType UTCTime = "string"
   TsType (Maybe a) = AppendSymbol (TsType a) " | null"
   TsType () = "void"
+  TsType (JsPromise a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
   TsType [a] = (AppendSymbol (TsType a) "[]")
   TsType a = (GTsType (Rep a))
 
@@ -67,6 +73,66 @@ instance Monoid TsFunctionDecl where
 
 class HasTSDecl a where
   tsDecl :: Proxy a -> TsFunctionDecl
+
+data TsSpec = TsFunctionD {
+  fnName' :: T.Text,
+  fnTypes' :: [T.Text],
+  fnVarNames' :: [T.Text],
+  fnRetType' :: T.Text
+  } |
+  TsNamespace {
+    nsName :: T.Text,
+    nsContents :: [TsSpec]
+            }
+  deriving (Show, Eq, Ord, Generic)
+-- API building
+
+data NS (n :: Symbol) (a :: [*])
+data Fn (name :: Symbol)
+data Arg (name :: Symbol) (typ :: *)
+data Ret (typ :: *)
+data f1 :> f2
+infixr 8 :>
+data f1 :+ f2
+infixr 9 :+
+
+indent :: T.Text -> T.Text
+indent s = T.unlines $ ("  " <> ) <$> T.lines s
+
+class HasTSSpec (a :: b) where
+  tsSpec :: Proxy a -> T.Text
+
+class HasTSSpecList (a :: [*]) where
+  tsSpecList :: Proxy a -> [T.Text]
+
+instance HasTSSpecList '[] where
+  tsSpecList _ = []
+
+instance (HasTSSpec x, HasTSSpecList xs) => HasTSSpecList (x ': xs) where
+  tsSpecList _ = (tsSpec (Proxy @x)) : (tsSpecList (Proxy @xs))
+
+instance (HasTSSpecList xs, KnownSymbol n) => HasTSSpec (NS n xs) where
+  tsSpec _ = "declare namespace " <> (T.pack $ symbolVal $ Proxy @n) <> " {\n" <>
+    T.concat (indent <$> (tsSpecList $ Proxy @xs)) <>
+    "}"
+
+instance (KnownSymbol n, HasTSSpec xs) => HasTSSpec ((Fn n) :> xs) where
+  tsSpec _ = "function " <> T.pack (symbolVal $ Proxy @n) <> "(" <> tsSpec (Proxy @xs)
+
+instance {-# OVERLAPS #-} (KnownSymbol (TsType t),
+          HasTSSpec (Arg n' t' :> xs),
+          KnownSymbol n
+         ) => HasTSSpec ((Arg n t) :> (Arg n' t' :> xs)) where
+  tsSpec _ = (symtext $ Proxy @n) <> ": " <>
+    symtext (Proxy @(TsType t)) <> ", " <>
+    tsSpec (Proxy @(Arg n' t' :> xs))
+
+instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg n t :> xs) where
+  tsSpec _ = (symtext $ Proxy @n) <> ": " <>
+    symtext (Proxy @(TsType t)) <> ")"
+
+instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
+  tsSpec _ = ": " <> symtext (Proxy @(TsType t))
 
 instance (KnownSymbol (TsType a)) => HasTSDecl (JsFnTypelist '[] a) where
   tsDecl _ = mempty {fnRetType = typeName}
