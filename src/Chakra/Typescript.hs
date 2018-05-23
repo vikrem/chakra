@@ -144,6 +144,18 @@ class HasTSImpl a where
 -- Proxy needed because TSImpl isn't injective
   injectAPI :: Proxy a -> [T.Text] -> TSImpl a -> Chakra ()
 
+class AllHasTSImpl (a :: [*]) where
+  injectAllAPI :: Proxy a -> [T.Text] -> TSImplList a -> Chakra ()
+
+instance (TypeError ('Text "Can't solve for the implementation of an empty namespace")) => AllHasTSImpl '[]
+instance {-# OVERLAPS #-} (HasTSImpl a) => AllHasTSImpl '[a] where
+  injectAllAPI _ xs x = injectAPI (Proxy @a) xs x
+instance (HasTSImpl a,
+          AllHasTSImpl xs,
+          TSImplList (a ': xs) ~ (TSImpl a :+ TSImplList xs)
+          ) => AllHasTSImpl (a ': xs) where
+  injectAllAPI _ xs (x :+ rest) = injectAPI (Proxy @a) xs x
+
 type family TSImplList (a :: [*]) where
   TSImplList '[] = TypeError ('Text "Can't solve for the implementation of an empty namespace")
   TSImplList '[x] = TSImpl x
@@ -169,9 +181,10 @@ instance (JsTypeable (TSImpl xs), HasTSImpl xs, KnownSymbol n) => HasTSImpl (Fn 
   type TSImpl (Fn n :> xs) = TSImpl xs
   injectAPI _ xs = injectAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
 
-instance (KnownSymbol n, HasTSImpl xs) => HasTSImpl (NS n xs) where
+
+instance (KnownSymbol n, AllHasTSImpl xs) => HasTSImpl (NS n xs) where
   type TSImpl (NS n xs) = TSImplList xs
-  injectAPI _ xs = injectAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
+  injectAPI _ xs = injectAllAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
 
 
 instance (KnownSymbol (TsType a),
