@@ -45,9 +45,11 @@ type family RetTsType a :: * where
   RetTsType (JsPromise a) = JsPromise a
   RetTsType typ = IO typ
 
+-- Mechanically generate inline typescript decls for simple datatypes
 class GHasTsType (r :: * -> *) where
   type GTsType r :: Symbol
 
+-- Grab field names
 instance GHasTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) where
   type GTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) = AppendSymbol fieldName (AppendSymbol ": " (TsType typ))
 
@@ -57,28 +59,32 @@ instance GHasTsType b => GHasTsType (D1 a b) where
 instance GHasTsType b => GHasTsType (C1 a b) where
   type GTsType (C1 a b) = AppendSymbol "{ " (AppendSymbol (GTsType b) " }")
 
+-- Product {foo: fooType, bar: barType}
 instance (GHasTsType a, GHasTsType b) => GHasTsType (a :*: b) where
   type GTsType (a :*: b) = AppendSymbol (GTsType a) (AppendSymbol ", " (GTsType b))
 
+-- Sum {foo: fooType} | {bar: barType}
 instance (GHasTsType a, GHasTsType b) => GHasTsType (a :+: b) where
   type GTsType (a :+: b) = AppendSymbol (GTsType a) (AppendSymbol " | " (GTsType b))
 
 -- API building
 
-data NS (n :: Symbol) (a :: [*])
-data Fn (name :: Symbol)
-data Arg (name :: Symbol) (typ :: *)
-data Ret (typ :: *)
-data f1 :> f2
+data NS (n :: Symbol) (a :: [*]) -- Namespace
+data Fn (name :: Symbol) -- Func
+data Arg (name :: Symbol) (typ :: *) -- Function argument
+data Ret (typ :: *) -- Function return type
+data f1 :> f2 -- Assemble function type
 infixr 8 :>
-data f1 :+ f2 = f1 :+ f2
+data f1 :+ f2 = f1 :+ f2 -- Add functions or namespaces together
 infixr 9 :+
 
 indent :: T.Text -> T.Text
 indent s = T.unlines $ ("  " <> ) <$> T.lines s
 
+-- "declare namespace" occurs only at top level. "namespace" underneath
 data Nesting = TopLevel | Nested
 
+-- Generate .ts.d from an API description
 class HasTSSpec (a :: b) where
   tsSpec :: Proxy a -> Nesting -> T.Text
 
@@ -86,7 +92,7 @@ class AllHasTSSpec (a :: [*]) where
   tsSpecList :: Proxy a -> Nesting -> [T.Text]
 
 instance AllHasTSSpec '[] where
-  tsSpecList _ nest = []
+  tsSpecList _ _ = []
 
 instance (HasTSSpec x, HasTSSpec y) => HasTSSpec (x :+ y) where
   tsSpec _ nest = tsSpec (Proxy @x) nest <> tsSpec (Proxy @y) nest
@@ -105,6 +111,9 @@ instance (AllHasTSSpec xs, KnownSymbol n) => HasTSSpec (NS n xs) where
 instance (KnownSymbol n, HasTSSpec xs) => HasTSSpec ((Fn n) :> xs) where
   tsSpec _ nest = "function " <> T.pack (symbolVal $ Proxy @n) <> "(" <> tsSpec (Proxy @xs) nest
 
+
+-- Seperate successive `Arg`s with commas.
+-- Fn "foo" :> Arg "bar" BarType :> Arg "baz" BazType :> Ret FooType
 instance {-# OVERLAPS #-} (KnownSymbol (TsType t),
           HasTSSpec (Arg n' t' :> xs),
           KnownSymbol n
@@ -113,11 +122,13 @@ instance {-# OVERLAPS #-} (KnownSymbol (TsType t),
     symtext (Proxy @(TsType t)) <> ", " <>
     tsSpec (Proxy @(Arg n' t' :> xs)) nest
 
+-- Last arg in a list of Args
 instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg n t :> xs) where
   tsSpec _ nest = (symtext $ Proxy @n) <> ": " <>
     symtext (Proxy @(TsType t)) <>
     tsSpec (Proxy @xs) nest
 
+-- Return type. Closes arg list
 instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
   tsSpec _ _ = "): " <> symtext (Proxy @(TsType t))
 
@@ -170,8 +181,10 @@ instance (KnownSymbol n, AllHasTSImpl xs) => HasTSImpl (NS n xs) where
   type TSImpl (NS n xs) = TSImplList xs
   injectAPI _ xs = injectAllAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
 
+-- Get .ts.d
 genTS :: HasTSSpec spec => Proxy spec -> T.Text
 genTS prox = tsSpec prox TopLevel
 
+-- Typecheck and inject an API
 injectNativeAPI :: (HasTSSpec bindings, HasTSImpl bindings) => Proxy bindings -> TSImpl bindings -> Chakra ()
 injectNativeAPI prox = injectAPI prox []
