@@ -3,14 +3,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE PolyKinds #-}
 
 module Chakra.Typescript where
 
-import Protolude
+import Protolude hiding (TypeError, (:+))
 import qualified Data.Text as T
 
 import Data.Aeson.Types (Value)
+import Data.List (init, last)
 import Types
 import Chakra
 import GHC.TypeLits
@@ -74,17 +76,6 @@ instance Monoid TsFunctionDecl where
 class HasTSDecl a where
   tsDecl :: Proxy a -> TsFunctionDecl
 
-data TsSpec = TsFunctionD {
-  fnName' :: T.Text,
-  fnTypes' :: [T.Text],
-  fnVarNames' :: [T.Text],
-  fnRetType' :: T.Text
-  } |
-  TsNamespace {
-    nsName :: T.Text,
-    nsContents :: [TsSpec]
-            }
-  deriving (Show, Eq, Ord, Generic)
 -- API building
 
 data NS (n :: Symbol) (a :: [*])
@@ -93,7 +84,7 @@ data Arg (name :: Symbol) (typ :: *)
 data Ret (typ :: *)
 data f1 :> f2
 infixr 8 :>
-data f1 :+ f2
+data f1 :+ f2 = f1 :+ f2
 infixr 9 :+
 
 indent :: T.Text -> T.Text
@@ -107,6 +98,9 @@ class HasTSSpecList (a :: [*]) where
 
 instance HasTSSpecList '[] where
   tsSpecList _ = []
+
+instance (HasTSSpec x, HasTSSpec y) => HasTSSpec (x :+ y) where
+  tsSpec _ = tsSpec (Proxy @x) <> tsSpec (Proxy @y)
 
 instance (HasTSSpec x, HasTSSpecList xs) => HasTSSpecList (x ': xs) where
   tsSpecList _ = (tsSpec (Proxy @x)) : (tsSpecList (Proxy @xs))
@@ -129,7 +123,8 @@ instance {-# OVERLAPS #-} (KnownSymbol (TsType t),
 
 instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg n t :> xs) where
   tsSpec _ = (symtext $ Proxy @n) <> ": " <>
-    symtext (Proxy @(TsType t)) <> ")"
+    symtext (Proxy @(TsType t)) <> ")" <>
+    tsSpec (Proxy @xs)
 
 instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
   tsSpec _ = ": " <> symtext (Proxy @(TsType t))
@@ -143,6 +138,41 @@ instance {-# OVERLAPS #-} (KnownSymbol (TsType a)) => HasTSDecl (JsFnTypelist '[
   tsDecl _ = mempty {fnRetType = "Promise<" <> typeName <> ">" }
     where
       typeName = T.pack $ symbolVal $ Proxy @(TsType a)
+
+class HasTSImpl a where
+  type TSImpl a :: *
+-- Proxy needed because TSImpl isn't injective
+  injectAPI :: Proxy a -> [T.Text] -> TSImpl a -> Chakra ()
+
+type family TSImplList (a :: [*]) where
+  TSImplList '[] = TypeError ('Text "Can't solve for the implementation of an empty namespace")
+  TSImplList '[x] = TSImpl x
+  TSImplList (x ': xs) = TSImpl x :+ TSImplList xs
+
+instance (HasTSImpl x, HasTSImpl y) => HasTSImpl (x :+ y) where
+  type TSImpl (x :+ y) = (TSImpl x) :+ (TSImpl y)
+  injectAPI _ ls (x :+ y) = injectAPI (Proxy @x) ls x >> injectAPI (Proxy @y) ls y
+
+instance JsTypeable a => HasTSImpl (Ret a) where
+  type TSImpl (Ret a) = a
+-- We need a function name!
+  injectAPI _ [] _ = undefined --injectChakra x ls ""
+  injectAPI _ xs x = injectChakra x (init xs) (last xs)
+
+instance (HasTSImpl xs, JsTypeable (t -> TSImpl xs)) => HasTSImpl (Arg n t :> xs) where
+  type TSImpl (Arg n t :> xs) = t -> TSImpl xs
+-- We need a function name!
+  injectAPI _ [] _ = undefined --injectChakra x ls ""
+  injectAPI _ xs x = injectChakra x (init xs) (last xs)
+
+instance (JsTypeable (TSImpl xs), HasTSImpl xs, KnownSymbol n) => HasTSImpl (Fn n :> xs) where
+  type TSImpl (Fn n :> xs) = TSImpl xs
+  injectAPI _ xs = injectAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
+
+instance (KnownSymbol n, HasTSImpl xs) => HasTSImpl (NS n xs) where
+  type TSImpl (NS n xs) = TSImplList xs
+  injectAPI _ xs = injectAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
+
 
 instance (KnownSymbol (TsType a),
           HasTSDecl (JsFnTypelist xs b)
