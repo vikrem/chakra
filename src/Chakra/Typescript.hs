@@ -77,44 +77,49 @@ infixr 9 :+
 indent :: T.Text -> T.Text
 indent s = T.unlines $ ("  " <> ) <$> T.lines s
 
+data Nesting = TopLevel | Nested
+
 class HasTSSpec (a :: b) where
-  tsSpec :: Proxy a -> T.Text
+  tsSpec :: Proxy a -> Nesting -> T.Text
 
 class AllHasTSSpec (a :: [*]) where
-  tsSpecList :: Proxy a -> [T.Text]
+  tsSpecList :: Proxy a -> Nesting -> [T.Text]
 
 instance AllHasTSSpec '[] where
-  tsSpecList _ = []
+  tsSpecList _ nest = []
 
 instance (HasTSSpec x, HasTSSpec y) => HasTSSpec (x :+ y) where
-  tsSpec _ = tsSpec (Proxy @x) <> tsSpec (Proxy @y)
+  tsSpec _ nest = tsSpec (Proxy @x) nest <> tsSpec (Proxy @y) nest
 
 instance (HasTSSpec x, AllHasTSSpec xs) => AllHasTSSpec (x ': xs) where
-  tsSpecList _ = (tsSpec (Proxy @x)) : (tsSpecList (Proxy @xs))
+  tsSpecList _ nest = (tsSpec (Proxy @x) nest) : (tsSpecList (Proxy @xs) nest)
 
 instance (AllHasTSSpec xs, KnownSymbol n) => HasTSSpec (NS n xs) where
-  tsSpec _ = "declare namespace " <> (T.pack $ symbolVal $ Proxy @n) <> " {\n" <>
-    T.concat (indent <$> (tsSpecList $ Proxy @xs)) <>
-    "}"
+  tsSpec _ nest = (topDecl nest) <> (T.pack $ symbolVal $ Proxy @n) <> " {\n" <>
+    T.concat (indent <$> (tsSpecList (Proxy @xs) Nested)) <>
+    "}\n"
+    where
+      topDecl TopLevel = "declare namespace "
+      topDecl Nested = "namespace "
 
 instance (KnownSymbol n, HasTSSpec xs) => HasTSSpec ((Fn n) :> xs) where
-  tsSpec _ = "function " <> T.pack (symbolVal $ Proxy @n) <> "(" <> tsSpec (Proxy @xs)
+  tsSpec _ nest = "function " <> T.pack (symbolVal $ Proxy @n) <> "(" <> tsSpec (Proxy @xs) nest
 
 instance {-# OVERLAPS #-} (KnownSymbol (TsType t),
           HasTSSpec (Arg n' t' :> xs),
           KnownSymbol n
          ) => HasTSSpec ((Arg n t) :> (Arg n' t' :> xs)) where
-  tsSpec _ = (symtext $ Proxy @n) <> ": " <>
+  tsSpec _ nest = (symtext $ Proxy @n) <> ": " <>
     symtext (Proxy @(TsType t)) <> ", " <>
-    tsSpec (Proxy @(Arg n' t' :> xs))
+    tsSpec (Proxy @(Arg n' t' :> xs)) nest
 
 instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg n t :> xs) where
-  tsSpec _ = (symtext $ Proxy @n) <> ": " <>
+  tsSpec _ nest = (symtext $ Proxy @n) <> ": " <>
     symtext (Proxy @(TsType t)) <>
-    tsSpec (Proxy @xs)
+    tsSpec (Proxy @xs) nest
 
 instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
-  tsSpec _ = "): " <> symtext (Proxy @(TsType t))
+  tsSpec _ _ = "): " <> symtext (Proxy @(TsType t))
 
 class HasTSImpl a where
   type TSImpl a :: *
@@ -166,7 +171,7 @@ instance (KnownSymbol n, AllHasTSImpl xs) => HasTSImpl (NS n xs) where
   injectAPI _ xs = injectAllAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
 
 genTS :: HasTSSpec spec => Proxy spec -> T.Text
-genTS = tsSpec
+genTS prox = tsSpec prox TopLevel
 
 injectNativeAPI :: (HasTSSpec bindings, HasTSImpl bindings) => Proxy bindings -> TSImpl bindings -> Chakra ()
 injectNativeAPI prox = injectAPI prox []
