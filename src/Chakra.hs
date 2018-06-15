@@ -2,30 +2,29 @@
 {-# LANGUAGE PolyKinds #-}
 
 module Chakra (
-  runChakra,
+  Chakra,
+  FromJSValue,
+  JsCallback,
+  JsPromise(..),
+  JsTypeable,
+  JsValue,
+  ToJSValue,
+  callCallback,
   chakraEval,
-  injectChakra,
   fromJSValue,
-  toJSValue,
+  injectChakra,
   jsNull,
   jsUndefined,
-  JsValue,
-  JsTypeable,
-  FromJSValue,
-  ToJSValue,
-  JsPromise(..),
-  Chakra
+  runChakra,
+  toJSValue,
   )
 where
 
 
 import Control.Concurrent.Async
 import Control.Concurrent.STM
-import Control.Concurrent.STM.TChan
 import Control.Exception.Safe
-import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Identity
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
 import Data.IORef
@@ -119,3 +118,10 @@ unsafeWalkProps obj (x:xs) = (do
     nextObj <- jsGetIndexedProperty obj nameObj
     unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
   throwString $ "An exception occurred during function injection: " ++ displayException e
+
+
+callCallback :: JsCallback -> [JsValue] -> IO JsValue
+callCallback (MkJsCallback ref) args = do
+  argRefs <- sequence $ unsafeMakeJsValueRef <$> args
+  retVal <- jsGetGlobalObject >>= \u -> jsCallFunction ref $ u:argRefs
+  unsafeWrapJsValue retVal

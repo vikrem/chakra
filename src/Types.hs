@@ -8,21 +8,25 @@
 
 module Types (
   Chakra(..),
+  FromJSValue(..),
+  JsCallback(..),
+  JsFnTypelist,
+  JsPromise(..),
+  JsType,
+  JsTypeable(..),
   JsValue,
   ToJSValue(..),
-  FromJSValue(..),
-  JsTypeable(..),
-  JsPromise(..),
-  JsFnTypelist,
-  JsType,
-  wrapJsValue,
   jsNull,
-  jsUndefined
+  jsUndefined,
+  unsafeMakeJsValueRef,
+  unsafeWrapJsValue,
+  wrapJsValue,
   ) where
 
 import Raw
 import Data.Aeson
 import Data.Monoid ((<>))
+import Control.Monad (when)
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
@@ -39,10 +43,14 @@ import GHC.TypeLits
 
 -- An IO exec environment that requires a bound, running js context to the current os thread
 newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
--- JS Values that have no ties to any `JsValueRef`s
+
+-- JS Values that represent more than what an Aeson Value represents
 -- This is to let you read them without IO or a Chakra context.
 -- allowing them to be pure and to escape Chakra.
-newtype JsValue = MkJsValue BS8.ByteString deriving (Eq)
+newtype JsValue = MkJsValue BS8.ByteString
+
+-- A handle to a js function in Chakra
+newtype JsCallback = MkJsCallback JsValueRef
 
 -- | A wrapper around an IO action. This is used to inject functions into Chakra that will return Promise objects, rather than a value, to Javascript.
 newtype JsPromise a = MkJsPromise { unJsPromise :: IO a }
@@ -150,6 +158,19 @@ instance ToJSValue a => JsTypeable (JsPromise a) where
       evalPromise gObj accept = unJsPromise r >>= \val -> do
           ref <- unsafeMakeJsValueRef $ toJSValue val
           void $ jsCallFunction accept [gObj, ref]
+
+-- TODO: Is this the only way to get callbacks to be treated differently?
+instance {-# INCOHERENT #-} (JsTypeable b) => JsTypeable (JsCallback -> b) where
+  cBare :: (JsCallback -> b) -> JsUnwrappedNativeFunction
+  cBare fn = \callee isConstruct argArr argCount cbState -> do
+    headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
+    case headParam of
+      Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
+      Just c -> do
+        typ <- jsGetValueType c
+        when (typ /= JsFunction) $
+          void $ unsafeThrowJsError $ "Expecting a JS function as an argument, found " <> (T.pack $ show c)
+        cBare (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
 instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
   cBare :: (a -> b) -> JsUnwrappedNativeFunction
