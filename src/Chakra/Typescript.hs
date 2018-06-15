@@ -11,7 +11,7 @@ module Chakra.Typescript where
 import Protolude hiding (TypeError, (:+))
 import qualified Data.Text as T
 
-import Data.Aeson.Types (Value)
+import Data.Aeson.Types (Value, Object)
 import Data.List (init, last)
 import Types
 import Chakra
@@ -31,6 +31,7 @@ type family TsType a :: Symbol where
   TsType Float = "number"
   TsType T.Text = "string"
   TsType Value = "any"
+  TsType Object = "Object"
   TsType Bool = "true | false"
   TsType UUID = "string"
   TsType UTCTime = "string"
