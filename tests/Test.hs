@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TupleSections #-}
 
 import Protolude
 import Test.Tasty
@@ -47,6 +48,7 @@ tests =
     ]
     , testGroup "Calling into Haskell"
     [ testCase "JS->HS namespaced function call" hsNamespacedCall
+    , testCase "JS->HS->JS callback usage" callbackTest
     , testCase "Catch invalid Haskell call" canCatchBadCC
     ]
   ]
@@ -55,21 +57,10 @@ instance Monad m => Serial m T.Text where
   series = T.pack <$> (series :: Series m String)
 
 instance (Eq k, Hashable k, Serial m k, Serial m v) => Serial m (HMS.HashMap k v) where
-  series = do
-    key <- series
-    value <- series
-    let element = return (key,value)
-    d <- getDepth
-    ls <- listM d element
-    return $ HMS.fromList ls
+  series = HMS.fromList <$> (series :: Series m [(k,v)])
 
 instance Serial m a => Serial m (V.Vector a) where
-  series = do
-    value <- series
-    d <- getDepth
-    let value' = return value
-    ls <- listM d value'
-    return $ V.fromList ls
+  series = V.fromList <$> (series :: Series m [a])
 
 instance Monad m => Serial m Scientific where
   series = cons2 scientific
@@ -128,3 +119,15 @@ canCatchBadCC = do
   readIORef death >>= (@=?) True
   where
     func a b = return $ a + b :: IO Integer
+
+callbackTest :: Assertion
+callbackTest = do
+  let js = "hsFn((x, y) => {return 5*x*y;});"
+  v <- runChakra $ injectChakra hsFn [] "hsFn" >> chakraEval js
+  let (Just val) = fromJSValue @Int v
+  val @?= 30
+  where
+    hsFn :: JsCallback -> IO Value
+    hsFn cb = do
+      v <- callCallback cb [toJSValue @Int 3, toJSValue @Int 2]
+      return $ fromMaybe Null $ fromJSValue @Value v
