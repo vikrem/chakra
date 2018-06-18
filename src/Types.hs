@@ -5,19 +5,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Types (
   Chakra(..),
   FromJSValue(..),
+  HsAsyncFn(..),
+  HsFn(..),
   JsCallback(..),
   JsFnTypelist,
-  JsPromise(..),
   JsType,
   JsTypeable(..),
   JsValue,
   ToJSValue(..),
+  asyncify,
   jsNull,
   jsUndefined,
+  syncify,
   unsafeMakeJsValueRef,
   unsafeWrapJsValue,
   wrapJsValue,
@@ -31,7 +35,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
 import Control.Exception.Safe
-import Control.Concurrent.Async
+
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Char8 as BS8
@@ -42,7 +46,8 @@ import Foreign.Marshal.Array
 import GHC.TypeLits
 
 -- An IO exec environment that requires a bound, running js context to the current os thread
-newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
+-- `s` is used to bind to the current VM
+newtype Chakra s a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- JS Values that represent more than what an Aeson Value represents
 -- This is to let you read them without IO or a Chakra context.
@@ -50,10 +55,27 @@ newtype Chakra a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicati
 newtype JsValue = MkJsValue BS8.ByteString
 
 -- A handle to a js function in Chakra
-newtype JsCallback = MkJsCallback JsValueRef
+-- Bound to the 's'
+newtype JsCallback s = MkJsCallback JsValueRef
 
--- | A wrapper around an IO action. This is used to inject functions into Chakra that will return Promise objects, rather than a value, to Javascript.
-newtype JsPromise a = MkJsPromise { unJsPromise :: IO a }
+-- | A wrapper around an IO action, that will run asynchronously
+newtype HsAsyncFn s a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative)
+
+deriving instance Monad (HsAsyncFn s)
+deriving instance MonadIO (HsAsyncFn s)
+
+-- | A wrapper around an IO action, that will run synchronously
+newtype HsFn s a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative)
+
+deriving instance Monad (HsFn s)
+deriving instance MonadIO (HsFn s)
+
+-- Natural transformations
+syncify :: HsFn s a -> HsAsyncFn s a
+syncify (MkNativeFn fn) = MkNativeAsyncFn fn
+
+asyncify :: HsAsyncFn s a -> HsFn s a
+asyncify (MkNativeAsyncFn fn) = MkNativeFn fn
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
@@ -85,7 +107,7 @@ unsafeWrapJsValue ref = do
   s <- unsafeExtractJsString serialObj
   return $ MkJsValue $ T.encodeUtf8 s
 
-wrapJsValue :: JsValueRef -> Chakra JsValue
+wrapJsValue :: JsValueRef -> Chakra s JsValue
 wrapJsValue ref = MkChakra $ lift $ unsafeWrapJsValue ref
 
 instance Show JsValue where
@@ -113,12 +135,12 @@ type family GetInpTypeLen xs :: Nat where
   GetInpTypeLen (JsFnTypelist '[] o) = 0
 
 type family JsType a where
-  JsType (IO a) = JsFnTypelist '[] a
-  JsType (JsPromise a) = JsFnTypelist '[] (JsPromise a)
+  JsType (HsFn s a) = JsFnTypelist '[] (HsFn s a)
+  JsType (HsAsyncFn s a) = JsFnTypelist '[] (HsAsyncFn s a)
   JsType (a -> b) = AddInpType a (JsType b)
 
 class JsTypeable a where
-  cWrapper :: a -> Chakra JsNativeFunction
+  cWrapper :: a -> Chakra s JsNativeFunction
   cWrapper fn = MkChakra $ do
     -- Register GC for funptr
     (_, ptr) <- allocate
@@ -138,12 +160,12 @@ wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
 wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -> do
   unsafeThrowJsError $ T.pack $ displayException ex
 
-instance ToJSValue a => JsTypeable (IO a) where
+instance ToJSValue a => JsTypeable (HsFn s a) where
   -- ignore all args, we just want to return a value
-  cBare r = \_ _ _ _ _ -> do
-    r >>= unsafeMakeJsValueRef . toJSValue
+  cBare r = \_ _ _ _ _ ->
+    unSyncFn r >>= unsafeMakeJsValueRef . toJSValue
 
-instance ToJSValue a => JsTypeable (JsPromise a) where
+instance ToJSValue a => JsTypeable (HsAsyncFn s a) where
   cBare r = \_ _ _ _ _ -> do
     (promise, accept, reject) <- jsCreatePromise
     sequence_ $ jsAddRef <$> [promise, accept, reject]
@@ -155,13 +177,13 @@ instance ToJSValue a => JsTypeable (JsPromise a) where
       `finally` (sequence_ $ jsRelease <$> [promise, accept, reject])
     return promise
     where
-      evalPromise gObj accept = unJsPromise r >>= \val -> do
+      evalPromise gObj accept = unAsyncFn r >>= \val -> do
           ref <- unsafeMakeJsValueRef $ toJSValue val
           void $ jsCallFunction accept [gObj, ref]
 
 -- TODO: Is this the only way to get callbacks to be treated differently?
-instance {-# INCOHERENT #-} (JsTypeable b) => JsTypeable (JsCallback -> b) where
-  cBare :: (JsCallback -> b) -> JsUnwrappedNativeFunction
+instance {-# INCOHERENT #-} (JsTypeable b) => JsTypeable (JsCallback s -> b) where
+  cBare :: (JsCallback s -> b) -> JsUnwrappedNativeFunction
   cBare fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of

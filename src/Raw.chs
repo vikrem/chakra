@@ -89,6 +89,7 @@ type JsUnwrappedPromiseContinuationCallback =
   -> Ptr () -- Void data
   -> IO ())
 
+
 foreign import ccall "wrapper" mkJsPromiseCallback :: JsUnwrappedPromiseContinuationCallback -> IO JsPromiseContinuationCallback
 
 freeJsNativeFunction :: JsNativeFunction -> IO ()
@@ -112,6 +113,11 @@ jsPeek p = peek p >>= \ref -> jsAddRef ref >> return ref
 {#pointer JsRuntimeHandle #}
 {#pointer JsContextRef #}
 {#pointer JsValueRef #}
+
+-- existentialize on s to keep refs from escaping scope
+newtype JsSafeRef s = MkSafeRef JsValueRef
+unwrapSafeRef :: JsSafeRef s -> JsValueRef
+unwrapSafeRef (MkSafeRef r) = r
 
 {#fun JsCreateRuntime as ^
  {`JsRuntimeAttributes',

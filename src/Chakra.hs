@@ -5,11 +5,12 @@ module Chakra (
   Chakra,
   FromJSValue,
   JsCallback,
-  JsPromise(..),
+  HsFn,
+  HsAsyncFn,
   JsTypeable,
   JsValue,
   ToJSValue,
-  callCallback,
+  runCallback,
   chakraEval,
   fromJSValue,
   injectChakra,
@@ -40,8 +41,8 @@ boundedWait f = asyncBound f >>= wait
 -- This function should be the only thing to ever escape Chakra.
 -- No occurrences of `unChakra` should exist, except here.
 
--- | Executes a Chakra context in IO and returns the resulting JsValue
-runChakra :: Chakra JsValue -> IO JsValue
+-- | Executes a Chakra context in IO and returns the resulting anything -- so long as it's not bound to s
+runChakra :: Chakra s a -> IO a
 runChakra chk = boundedWait $ runResourceT $ do
   allocate
     setupChakra
@@ -63,7 +64,7 @@ teardownChakra rt = do
 pushPromise :: TChan JsValueRef -> JsValueRef -> Ptr () -> IO ()
 pushPromise chan ref _ = jsAddRef ref >> atomically (writeTChan chan ref)
 
-evalPromises :: TChan JsValueRef -> IORef JsValue -> Chakra ()
+evalPromises :: TChan JsValueRef -> IORef JsValue -> Chakra s ()
 evalPromises chan ref = MkChakra $ lift $ atomically (tryReadTChan chan) >>= \case
   Nothing -> pure ()
   Just val -> do
@@ -78,7 +79,7 @@ evalPromises chan ref = MkChakra $ lift $ atomically (tryReadTChan chan) >>= \ca
 --
 -- >>> runChakra $ chakraEval "5 + 3"
 -- 8
-chakraEval :: T.Text -> Chakra JsValue
+chakraEval :: T.Text -> Chakra s JsValue
 chakraEval t = do
   promiseQueue <- liftIO $ atomically newTChan
   (promiseKey, promisePtr) <- MkChakra $ allocate
@@ -91,7 +92,7 @@ chakraEval t = do
   liftIO $ jsSetPromiseContinuationCallback Raw.nullFunPtr ()
   liftIO $ readIORef ref
 
-unsafeChakraEval :: T.Text -> Chakra JsValueRef
+unsafeChakraEval :: T.Text -> Chakra s JsValueRef
 unsafeChakraEval src = MkChakra $ lift $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
@@ -101,7 +102,7 @@ unsafeChakraEval src = MkChakra $ lift $ do
 ---
 --- >>> runChakra $ injectChakra (\fn -> return (fn ++ "!") :: IO String) [] "f" >>  chakraEval "f('3');"
 --- "3!"
-injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra ()
+injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra s ()
 injectChakra fn namespaces name = do
   fnWrap <- cWrapper fn
   MkChakra $ lift $ do
@@ -119,9 +120,13 @@ unsafeWalkProps obj (x:xs) = (do
     unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
   throwString $ "An exception occurred during function injection: " ++ displayException e
 
-
-callCallback :: JsCallback -> [JsValue] -> IO JsValue
-callCallback (MkJsCallback ref) args = do
+-- Runs a callback, but is unsafe as it ignores the bound `s` on the callback
+unsafeRunCallback :: MonadIO m => JsCallback s -> [JsValue] -> m JsValue
+unsafeRunCallback (MkJsCallback ref) args = liftIO $ do
   argRefs <- sequence $ unsafeMakeJsValueRef <$> args
   retVal <- jsGetGlobalObject >>= \u -> jsCallFunction ref $ u:argRefs
   unsafeWrapJsValue retVal
+
+-- Runs a callback bound to the `s` of the vm
+runCallback :: JsCallback s -> [JsValue] -> HsFn s JsValue
+runCallback = unsafeRunCallback

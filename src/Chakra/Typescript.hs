@@ -37,14 +37,14 @@ type family TsType a :: Symbol where
   TsType UTCTime = "string"
   TsType (Maybe a) = AppendSymbol (TsType a) " | null"
   TsType () = "void"
-  TsType (JsPromise a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
+  TsType (HsAsyncFn s a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
   TsType [a] = (AppendSymbol (TsType a) "[]")
   TsType a = (GTsType (Rep a))
 
 -- The final return type of a native function that returns an `a` to js
 type family RetTsType a :: * where
-  RetTsType (JsPromise a) = JsPromise a
-  RetTsType typ = IO typ
+  RetTsType (HsAsyncFn s a) = HsAsyncFn s a
+  RetTsType (HsFn s a) = HsFn s a
 
 -- Mechanically generate inline typescript decls for simple datatypes
 class GHasTsType (r :: * -> *) where
@@ -136,10 +136,10 @@ instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
 class HasTSImpl a where
   type TSImpl a :: *
 -- Proxy needed because TSImpl isn't injective
-  injectAPI :: Proxy a -> [T.Text] -> TSImpl a -> Chakra ()
+  injectAPI :: Proxy a -> [T.Text] -> TSImpl a -> Chakra s ()
 
 class AllHasTSImpl (a :: [*]) where
-  injectAllAPI :: Proxy a -> [T.Text] -> TSImplList a -> Chakra ()
+  injectAllAPI :: Proxy a -> [T.Text] -> TSImplList a -> Chakra s ()
 
 instance (TypeError ('Text "Can't solve for the implementation of an empty namespace")) => AllHasTSImpl '[] where
   injectAllAPI = undefined
@@ -187,5 +187,5 @@ genTS :: HasTSSpec spec => Proxy spec -> T.Text
 genTS prox = tsSpec prox TopLevel
 
 -- Typecheck and inject an API
-injectNativeAPI :: (HasTSSpec bindings, HasTSImpl bindings) => Proxy bindings -> TSImpl bindings -> Chakra ()
+injectNativeAPI :: (HasTSSpec bindings, HasTSImpl bindings) => Proxy bindings -> TSImpl bindings -> Chakra s ()
 injectNativeAPI prox = injectAPI prox []
