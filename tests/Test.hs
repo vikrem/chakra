@@ -136,8 +136,8 @@ callbackTest = do
 storedCallbackTest :: Assertion
 storedCallbackTest = do
   let js = "register((x, y) => {return 5*x*y;}); call();"
-  ref <- newIORef Nothing
   v <- runChakra $ do
+    ref <- liftIO $ newIORef Nothing
     injectChakra (register ref) [] "register"
     injectChakra (call ref) [] "call"
     chakraEval js
