@@ -36,14 +36,16 @@ import qualified Data.Text as T
 import Raw
 import Types
 
+-- Ensure that the IO action runs in a bound thread
 boundedWait :: IO a -> IO a
 boundedWait f = asyncBound f >>= wait
 
 -- This function should be the only thing to ever escape Chakra.
 -- No occurrences of `unChakra` should exist, except here.
 
--- | Executes a Chakra context in IO and returns the resulting anything -- so long as it's not bound to s
-runChakra :: (forall s. Chakra s a) -> IO a
+-- | Executes a Chakra context in IO and returns the resulting JsValue --
+-- so long as it's not bound to this free 'vm' param
+runChakra :: (forall vm. Chakra vm a) -> IO a
 runChakra chk = boundedWait $ runResourceT $ do
   allocate
     setupChakra
@@ -80,7 +82,7 @@ evalPromises chan ref = MkChakra $ lift $ atomically (tryReadTChan chan) >>= \ca
 --
 -- >>> runChakra $ chakraEval "5 + 3"
 -- 8
-chakraEval :: T.Text -> Chakra s JsValue
+chakraEval :: T.Text -> Chakra vm JsValue
 chakraEval t = do
   promiseQueue <- liftIO $ atomically newTChan
   (promiseKey, promisePtr) <- MkChakra $ allocate
@@ -93,7 +95,7 @@ chakraEval t = do
   liftIO $ jsSetPromiseContinuationCallback Raw.nullFunPtr ()
   liftIO $ readIORef ref
 
-unsafeChakraEval :: T.Text -> Chakra s JsValueRef
+unsafeChakraEval :: T.Text -> Chakra vm JsValueRef
 unsafeChakraEval src = MkChakra $ lift $ do
       script <- jsCreateString src
       source <- jsCreateString "[runScript]"
@@ -122,7 +124,7 @@ unsafeWalkProps obj (x:xs) = (do
   throwString $ "An exception occurred during function injection: " ++ displayException e
 
 -- Runs a callback, but is unsafe as it ignores the bound `s` on the callback
-unsafeRunCallback :: MonadIO m => JsCallback s -> [JsValue] -> m JsValue
+unsafeRunCallback :: MonadIO m => JsCallback vm -> [JsValue] -> m JsValue
 unsafeRunCallback (MkJsCallback ref) args = liftIO $ do
   argRefs <- sequence $ unsafeMakeJsValueRef <$> args
   retVal <- jsGetGlobalObject >>= \u -> jsCallFunction ref $ u:argRefs

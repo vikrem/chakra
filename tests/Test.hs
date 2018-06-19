@@ -144,11 +144,11 @@ storedCallbackTest = do
   let (Just val) = fromJSValue @Int v
   val @?= 30
   where
-    register :: IORef (Maybe (JsCallback s)) -> JsCallback s -> HsFn Value
+    register :: IORef (Maybe (JsCallback vm)) -> JsCallback vm -> HsFn Value
     register ref cb = do
       liftIO $ writeIORef ref $ Just cb
       return Null
-    call :: IORef (Maybe (JsCallback s)) -> HsFn Value
+    call :: IORef (Maybe (JsCallback vm)) -> HsFn Value
     call ref = do
       Just cb <- liftIO $ readIORef ref
       v <- runCallback cb [toJSValue @Int 3, toJSValue @Int 2]

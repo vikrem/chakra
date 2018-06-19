@@ -145,14 +145,14 @@ class AllHasTSImpl s (a :: [*]) where
 instance (TypeError ('Text "Can't solve for the implementation of an empty namespace")) => AllHasTSImpl s '[] where
   injectAllAPI = undefined
 
-instance {-# OVERLAPS #-} (HasTSImpl s1 a, s1 ~ s2) => AllHasTSImpl s2 '[a] where
+instance {-# OVERLAPS #-} (HasTSImpl vm1 a, vm1 ~ vm2) => AllHasTSImpl vm2 '[a] where
   injectAllAPI _ = injectAPI (Proxy @a)
 
-instance (HasTSImpl s1 a,
-          AllHasTSImpl s2 xs,
+instance (HasTSImpl vm1 a,
+          AllHasTSImpl vm2 xs,
           TSImplList (a ': xs) ~ (TSImpl a :+ TSImplList xs),
-          s1 ~ s2
-          ) => AllHasTSImpl s2 (a ': xs) where
+          vm1 ~ vm2
+          ) => AllHasTSImpl vm2 (a ': xs) where
   injectAllAPI _ ps xs (x :+ rest) = injectAPI (Proxy @a) ps xs x >> injectAllAPI (Proxy @xs) ps xs rest
 
 type family TSImplList (a :: [*]) where
@@ -160,27 +160,27 @@ type family TSImplList (a :: [*]) where
   TSImplList '[x] = TSImpl x
   TSImplList (x ': xs) = TSImpl x :+ TSImplList xs
 
-instance (HasTSImpl s1 x, HasTSImpl s2 y, s1 ~ s2) => HasTSImpl s2 (x :+ y) where
+instance (HasTSImpl vm1 x, HasTSImpl vm2 y, vm1 ~ vm2) => HasTSImpl vm2 (x :+ y) where
   type TSImpl (x :+ y) = (TSImpl x) :+ (TSImpl y)
   injectAPI _ ps ls (x :+ y) = injectAPI (Proxy @x) ps ls x >> injectAPI (Proxy @y) ps ls y
 
-instance (JsTypeable s1 (RetTsType a), s1 ~ s2) => HasTSImpl s2 (Ret a) where
+instance (JsTypeable vm1 (RetTsType a), vm1 ~ vm2) => HasTSImpl vm2 (Ret a) where
   type TSImpl (Ret a) = RetTsType a
 -- We need a function name!
   injectAPI _ _ [] _ = undefined --injectChakra x ls ""
-  injectAPI _ _ xs x = injectChakra @s2 x (init xs) (last xs)
+  injectAPI _ _ xs x = injectChakra @vm2 x (init xs) (last xs)
 
-instance (HasTSImpl s1 xs, JsTypeable s2 (t -> TSImpl xs), s1 ~ s2) => HasTSImpl s1 (Arg n t :> xs) where
+instance (HasTSImpl vm1 xs, JsTypeable vm2 (t -> TSImpl xs), vm1 ~ vm2) => HasTSImpl vm1 (Arg n t :> xs) where
   type TSImpl (Arg n t :> xs) = t -> TSImpl xs
 -- We need a function name!
   injectAPI _ _ [] _ = undefined --injectChakra x ls ""
-  injectAPI _ _ xs x = injectChakra @s2 x (init xs) (last xs)
+  injectAPI _ _ xs x = injectChakra @vm2 x (init xs) (last xs)
 
-instance (JsTypeable s1 (TSImpl xs), HasTSImpl s2 xs, KnownSymbol n, s1 ~ s2) => HasTSImpl s2 (Fn n :> xs) where
+instance (JsTypeable vm1 (TSImpl xs), HasTSImpl vm2 xs, KnownSymbol n, vm1 ~ vm2) => HasTSImpl vm2 (Fn n :> xs) where
   type TSImpl (Fn n :> xs) = TSImpl xs
   injectAPI _ ps xs = injectAPI (Proxy @xs) ps (xs ++ [symtext $ Proxy @n])
 
-instance (KnownSymbol n, AllHasTSImpl s1 xs) => HasTSImpl s1 (NS n xs) where
+instance (KnownSymbol n, AllHasTSImpl vm1 xs) => HasTSImpl vm1 (NS n xs) where
   type TSImpl (NS n xs) = TSImplList xs
   injectAPI _ ps xs = injectAllAPI (Proxy @xs) ps (xs ++ [symtext $ Proxy @n])
 

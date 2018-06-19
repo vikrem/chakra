@@ -12,8 +12,6 @@ module Types (
   HsAsyncFn(..),
   HsFn(..),
   JsCallback(..),
-  JsFnTypelist,
-  JsType,
   JsTypeable(..),
   JsValue,
   ToJSValue(..),
@@ -46,8 +44,8 @@ import Foreign.Marshal.Array
 import GHC.TypeLits
 
 -- An IO exec environment that requires a bound, running js context to the current os thread
--- `s` is used to bind to the current VM
-newtype Chakra s a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
+-- `vm` is used to bind a free var to the current VM
+newtype Chakra vm a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- JS Values that represent more than what an Aeson Value represents
 -- This is to let you read them without IO or a Chakra context.
@@ -120,19 +118,6 @@ instance ToJSON a => ToJSValue a where
 instance FromJSON a => FromJSValue a where
   fromJSValue (MkJsValue ref) = decodeStrict' ref
 
--- Getting funcs into chakra env
-data JsFnTypelist (inpTypes :: [*]) (outType :: *)
-
-type family AddInpType n m where
-  AddInpType n (JsFnTypelist i o) = JsFnTypelist (n:i) o
-type family GetInpTypeLen xs :: Nat where
-  GetInpTypeLen (JsFnTypelist '[] o) = 0
-
-type family JsType a where
-  JsType (HsFn a) = JsFnTypelist '[] (HsFn a)
-  JsType (HsAsyncFn a) = JsFnTypelist '[] (HsAsyncFn a)
-  JsType (a -> b) = AddInpType a (JsType b)
-
 class JsTypeable s a where
   cWrapper :: Proxy s -> a -> Chakra s JsNativeFunction
   cWrapper px fn = MkChakra $ do
@@ -176,8 +161,8 @@ instance ToJSValue a => JsTypeable s (HsAsyncFn a) where
           void $ jsCallFunction accept [gObj, ref]
 
 -- TODO: Is this the only way to get callbacks to be treated differently?
-instance {-# INCOHERENT #-} (JsTypeable s b, s1 ~ s) => JsTypeable s (JsCallback s1 -> b) where
-  cBare :: Proxy s -> (JsCallback s -> b) -> JsUnwrappedNativeFunction
+instance {-# INCOHERENT #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCallback vm1 -> b) where
+  cBare :: Proxy vm -> (JsCallback vm -> b) -> JsUnwrappedNativeFunction
   cBare px fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
@@ -188,8 +173,8 @@ instance {-# INCOHERENT #-} (JsTypeable s b, s1 ~ s) => JsTypeable s (JsCallback
           void $ unsafeThrowJsError $ "Expecting a JS function as an argument, found " <> (T.pack $ show c)
         cBare px (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
-instance (FromJSValue a, JsTypeable s b, s ~ s1) => JsTypeable s1 (a -> b) where
-  cBare :: Proxy s -> (a -> b) -> JsUnwrappedNativeFunction
+instance (FromJSValue a, JsTypeable vm b, vm ~ vm1) => JsTypeable vm1 (a -> b) where
+  cBare :: Proxy vm -> (a -> b) -> JsUnwrappedNativeFunction
   cBare px fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
