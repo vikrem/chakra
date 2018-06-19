@@ -82,7 +82,7 @@ typeRefl :: forall a. CanGenRefl a => Proxy a -> Property IO
 typeRefl _ = forAll $ \(x :: a) -> monadic $ do
     let jsSerial = (T.decodeUtf8 . BSL.toStrict . encode $ x)
     let evalStr = "(" <> jsSerial <> ")"
-    let hsFunc = liftIO $ return x :: HsFn s a
+    let hsFunc = liftIO $ return x :: HsFn a
     let callStr = "(f())"
     (Just direct_ref) <- fromJSValue <$> runChakra (chakraEval evalStr)
     (Just direct_call) <- fromJSValue <$> runChakra (injectChakra hsFunc [] "f" >> chakraEval callStr)
@@ -91,8 +91,8 @@ typeRefl _ = forAll $ \(x :: a) -> monadic $ do
 typePromiseRefl :: forall a. CanGenRefl a => Proxy a -> Property IO
 typePromiseRefl _ = forAll $ \(x :: a) -> monadic $ do
     reportVar <- newIORef Nothing
-    let hsFunc = liftIO $ return x :: HsAsyncFn s a
-    let reportFunc = liftIO <$> writeIORef reportVar . Just :: a -> HsFn s ()
+    let hsFunc = liftIO $ return x :: HsAsyncFn a
+    let reportFunc = liftIO <$> writeIORef reportVar . Just :: a -> HsFn ()
     let callStr = "f().then((v) => {r(v)}).catch((e) => {throw e})"
     runChakra $ do
       injectChakra hsFunc [] "f"
@@ -109,7 +109,7 @@ hsNamespacedCall = do
   let (Just val) = fromJSValue @Int v
   val @?= 20
   where
-    f :: Int -> Int -> String -> HsFn s Int
+    f :: Int -> Int -> String -> HsFn Int
     f a b s = liftIO $ return $ a + b + length s
 
 canCatchBadCC :: Assertion
@@ -119,7 +119,7 @@ canCatchBadCC = do
     \(_ :: SomeException) -> writeIORef death True >> return undefined
   readIORef death >>= (@=?) True
   where
-    func a b = liftIO $ return $ a + b :: HsFn s Integer
+    func a b = liftIO $ return $ a + b :: HsFn Integer
 
 callbackTest :: Assertion
 callbackTest = do
@@ -128,7 +128,7 @@ callbackTest = do
   let (Just val) = fromJSValue @Int v
   val @?= 30
   where
-    hsFn :: JsCallback s -> HsFn s Value
+    hsFn :: JsCallback s -> HsFn Value
     hsFn cb = do
       v <- runCallback cb [toJSValue @Int 3, toJSValue @Int 2]
       return $ fromMaybe Null $ fromJSValue @Value v
@@ -144,11 +144,11 @@ storedCallbackTest = do
   let (Just val) = fromJSValue @Int v
   val @?= 30
   where
-    register :: IORef (Maybe (JsCallback s)) -> JsCallback s -> HsFn s Value
+    register :: IORef (Maybe (JsCallback s)) -> JsCallback s -> HsFn Value
     register ref cb = do
       liftIO $ writeIORef ref $ Just cb
       return Null
-    call :: IORef (Maybe (JsCallback s)) -> HsFn s Value
+    call :: IORef (Maybe (JsCallback s)) -> HsFn Value
     call ref = do
       Just cb <- liftIO $ readIORef ref
       v <- runCallback cb [toJSValue @Int 3, toJSValue @Int 2]

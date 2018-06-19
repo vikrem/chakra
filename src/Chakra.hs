@@ -21,7 +21,6 @@ module Chakra (
   )
 where
 
-
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception.Safe
@@ -29,7 +28,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Resource
 import Data.IORef
+import Data.Proxy
 import Foreign.Ptr
+
 import qualified Data.Text as T
 
 import Raw
@@ -42,7 +43,7 @@ boundedWait f = asyncBound f >>= wait
 -- No occurrences of `unChakra` should exist, except here.
 
 -- | Executes a Chakra context in IO and returns the resulting anything -- so long as it's not bound to s
-runChakra :: Chakra s a -> IO a
+runChakra :: (forall s. Chakra s a) -> IO a
 runChakra chk = boundedWait $ runResourceT $ do
   allocate
     setupChakra
@@ -102,9 +103,9 @@ unsafeChakraEval src = MkChakra $ lift $ do
 ---
 --- >>> runChakra $ injectChakra (\fn -> return (fn ++ "!") :: IO String) [] "f" >>  chakraEval "f('3');"
 --- "3!"
-injectChakra :: JsTypeable a => a -> [T.Text] -> T.Text -> Chakra s ()
+injectChakra :: JsTypeable s a => a -> [T.Text] -> T.Text -> Chakra s ()
 injectChakra fn namespaces name = do
-  fnWrap <- cWrapper fn
+  fnWrap <- cWrapper (Proxy :: Proxy s) fn
   MkChakra $ lift $ do
     gObj <- jsGetGlobalObject
     nameSpace <- unsafeWalkProps gObj namespaces
@@ -128,5 +129,5 @@ unsafeRunCallback (MkJsCallback ref) args = liftIO $ do
   unsafeWrapJsValue retVal
 
 -- Runs a callback bound to the `s` of the vm
-runCallback :: JsCallback s -> [JsValue] -> HsFn s JsValue
+runCallback :: JsCallback s -> [JsValue] -> HsFn JsValue
 runCallback = unsafeRunCallback

@@ -1,6 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -37,14 +38,14 @@ type family TsType a :: Symbol where
   TsType UTCTime = "string"
   TsType (Maybe a) = AppendSymbol (TsType a) " | null"
   TsType () = "void"
-  TsType (HsAsyncFn s a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
+  TsType (HsAsyncFn a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
   TsType [a] = (AppendSymbol (TsType a) "[]")
   TsType a = (GTsType (Rep a))
 
 -- The final return type of a native function that returns an `a` to js
 type family RetTsType a :: * where
-  RetTsType (HsAsyncFn s a) = HsAsyncFn s a
-  RetTsType (HsFn s a) = HsFn s a
+  RetTsType (HsAsyncFn a) = HsAsyncFn a
+  RetTsType (HsFn a) = HsFn a
 
 -- Mechanically generate inline typescript decls for simple datatypes
 class GHasTsType (r :: * -> *) where
@@ -133,59 +134,60 @@ instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg
 instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
   tsSpec _ _ = "): " <> symtext (Proxy @(TsType t))
 
-class HasTSImpl a where
+class HasTSImpl s a where
   type TSImpl a :: *
 -- Proxy needed because TSImpl isn't injective
-  injectAPI :: Proxy a -> [T.Text] -> TSImpl a -> Chakra s ()
+  injectAPI :: Proxy a -> Proxy s -> [T.Text] -> TSImpl a -> Chakra s ()
 
-class AllHasTSImpl (a :: [*]) where
-  injectAllAPI :: Proxy a -> [T.Text] -> TSImplList a -> Chakra s ()
+class AllHasTSImpl s (a :: [*]) where
+  injectAllAPI :: Proxy a -> Proxy s -> [T.Text] -> TSImplList a -> Chakra s ()
 
-instance (TypeError ('Text "Can't solve for the implementation of an empty namespace")) => AllHasTSImpl '[] where
+instance (TypeError ('Text "Can't solve for the implementation of an empty namespace")) => AllHasTSImpl s '[] where
   injectAllAPI = undefined
 
-instance {-# OVERLAPS #-} (HasTSImpl a) => AllHasTSImpl '[a] where
+instance {-# OVERLAPS #-} (HasTSImpl s1 a, s1 ~ s2) => AllHasTSImpl s2 '[a] where
   injectAllAPI _ = injectAPI (Proxy @a)
 
-instance (HasTSImpl a,
-          AllHasTSImpl xs,
-          TSImplList (a ': xs) ~ (TSImpl a :+ TSImplList xs)
-          ) => AllHasTSImpl (a ': xs) where
-  injectAllAPI _ xs (x :+ rest) = injectAPI (Proxy @a) xs x >> injectAllAPI (Proxy @xs) xs rest
+instance (HasTSImpl s1 a,
+          AllHasTSImpl s2 xs,
+          TSImplList (a ': xs) ~ (TSImpl a :+ TSImplList xs),
+          s1 ~ s2
+          ) => AllHasTSImpl s2 (a ': xs) where
+  injectAllAPI _ ps xs (x :+ rest) = injectAPI (Proxy @a) ps xs x >> injectAllAPI (Proxy @xs) ps xs rest
 
 type family TSImplList (a :: [*]) where
   TSImplList '[] = TypeError ('Text "Can't solve for the implementation of an empty namespace")
   TSImplList '[x] = TSImpl x
   TSImplList (x ': xs) = TSImpl x :+ TSImplList xs
 
-instance (HasTSImpl x, HasTSImpl y) => HasTSImpl (x :+ y) where
+instance (HasTSImpl s1 x, HasTSImpl s2 y, s1 ~ s2) => HasTSImpl s2 (x :+ y) where
   type TSImpl (x :+ y) = (TSImpl x) :+ (TSImpl y)
-  injectAPI _ ls (x :+ y) = injectAPI (Proxy @x) ls x >> injectAPI (Proxy @y) ls y
+  injectAPI _ ps ls (x :+ y) = injectAPI (Proxy @x) ps ls x >> injectAPI (Proxy @y) ps ls y
 
-instance JsTypeable (RetTsType a) => HasTSImpl (Ret a) where
+instance (JsTypeable s1 (RetTsType a), s1 ~ s2) => HasTSImpl s2 (Ret a) where
   type TSImpl (Ret a) = RetTsType a
 -- We need a function name!
-  injectAPI _ [] _ = undefined --injectChakra x ls ""
-  injectAPI _ xs x = injectChakra x (init xs) (last xs)
+  injectAPI _ _ [] _ = undefined --injectChakra x ls ""
+  injectAPI _ _ xs x = injectChakra @s2 x (init xs) (last xs)
 
-instance (HasTSImpl xs, JsTypeable (t -> TSImpl xs)) => HasTSImpl (Arg n t :> xs) where
+instance (HasTSImpl s1 xs, JsTypeable s2 (t -> TSImpl xs), s1 ~ s2) => HasTSImpl s1 (Arg n t :> xs) where
   type TSImpl (Arg n t :> xs) = t -> TSImpl xs
 -- We need a function name!
-  injectAPI _ [] _ = undefined --injectChakra x ls ""
-  injectAPI _ xs x = injectChakra x (init xs) (last xs)
+  injectAPI _ _ [] _ = undefined --injectChakra x ls ""
+  injectAPI _ _ xs x = injectChakra @s2 x (init xs) (last xs)
 
-instance (JsTypeable (TSImpl xs), HasTSImpl xs, KnownSymbol n) => HasTSImpl (Fn n :> xs) where
+instance (JsTypeable s1 (TSImpl xs), HasTSImpl s2 xs, KnownSymbol n, s1 ~ s2) => HasTSImpl s2 (Fn n :> xs) where
   type TSImpl (Fn n :> xs) = TSImpl xs
-  injectAPI _ xs = injectAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
+  injectAPI _ ps xs = injectAPI (Proxy @xs) ps (xs ++ [symtext $ Proxy @n])
 
-instance (KnownSymbol n, AllHasTSImpl xs) => HasTSImpl (NS n xs) where
+instance (KnownSymbol n, AllHasTSImpl s1 xs) => HasTSImpl s1 (NS n xs) where
   type TSImpl (NS n xs) = TSImplList xs
-  injectAPI _ xs = injectAllAPI (Proxy @xs) (xs ++ [symtext $ Proxy @n])
+  injectAPI _ ps xs = injectAllAPI (Proxy @xs) ps (xs ++ [symtext $ Proxy @n])
 
 -- Get .ts.d
 genTS :: HasTSSpec spec => Proxy spec -> T.Text
 genTS prox = tsSpec prox TopLevel
 
 -- Typecheck and inject an API
-injectNativeAPI :: (HasTSSpec bindings, HasTSImpl bindings) => Proxy bindings -> TSImpl bindings -> Chakra s ()
-injectNativeAPI prox = injectAPI prox []
+injectNativeAPI :: (HasTSSpec bindings, HasTSImpl s bindings) => Proxy bindings -> TSImpl bindings -> Chakra s ()
+injectNativeAPI prox = injectAPI prox (Proxy :: Proxy s) []

@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -28,6 +27,7 @@ module Types (
   ) where
 
 import Raw
+import Data.Proxy
 import Data.Aeson
 import Data.Monoid ((<>))
 import Control.Monad (when)
@@ -59,22 +59,16 @@ newtype JsValue = MkJsValue BS8.ByteString
 newtype JsCallback s = MkJsCallback JsValueRef
 
 -- | A wrapper around an IO action, that will run asynchronously
-newtype HsAsyncFn s a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative)
-
-deriving instance Monad (HsAsyncFn s)
-deriving instance MonadIO (HsAsyncFn s)
+newtype HsAsyncFn a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- | A wrapper around an IO action, that will run synchronously
-newtype HsFn s a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative)
-
-deriving instance Monad (HsFn s)
-deriving instance MonadIO (HsFn s)
+newtype HsFn a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- Natural transformations
-syncify :: HsFn s a -> HsAsyncFn s a
+syncify :: HsFn a -> HsAsyncFn a
 syncify (MkNativeFn fn) = MkNativeAsyncFn fn
 
-asyncify :: HsAsyncFn s a -> HsFn s a
+asyncify :: HsAsyncFn a -> HsFn a
 asyncify (MkNativeAsyncFn fn) = MkNativeFn fn
 
 safeHead :: [a] -> Maybe a
@@ -135,19 +129,19 @@ type family GetInpTypeLen xs :: Nat where
   GetInpTypeLen (JsFnTypelist '[] o) = 0
 
 type family JsType a where
-  JsType (HsFn s a) = JsFnTypelist '[] (HsFn s a)
-  JsType (HsAsyncFn s a) = JsFnTypelist '[] (HsAsyncFn s a)
+  JsType (HsFn a) = JsFnTypelist '[] (HsFn a)
+  JsType (HsAsyncFn a) = JsFnTypelist '[] (HsAsyncFn a)
   JsType (a -> b) = AddInpType a (JsType b)
 
-class JsTypeable a where
-  cWrapper :: a -> Chakra s JsNativeFunction
-  cWrapper fn = MkChakra $ do
+class JsTypeable s a where
+  cWrapper :: Proxy s -> a -> Chakra s JsNativeFunction
+  cWrapper px fn = MkChakra $ do
     -- Register GC for funptr
     (_, ptr) <- allocate
-      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare fn)
+      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare px fn)
       freeJsNativeFunction
     return ptr
-  cBare :: a -> JsUnwrappedNativeFunction
+  cBare :: Proxy s -> a -> JsUnwrappedNativeFunction
 
 -- The first argument passed to a native function is 'this'.
 -- This is used to drop it
@@ -160,13 +154,13 @@ wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
 wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -> do
   unsafeThrowJsError $ T.pack $ displayException ex
 
-instance ToJSValue a => JsTypeable (HsFn s a) where
+instance ToJSValue a => JsTypeable s (HsFn a) where
   -- ignore all args, we just want to return a value
-  cBare r = \_ _ _ _ _ ->
+  cBare _ r = \_ _ _ _ _ ->
     unSyncFn r >>= unsafeMakeJsValueRef . toJSValue
 
-instance ToJSValue a => JsTypeable (HsAsyncFn s a) where
-  cBare r = \_ _ _ _ _ -> do
+instance ToJSValue a => JsTypeable s (HsAsyncFn a) where
+  cBare _ r = \_ _ _ _ _ -> do
     (promise, accept, reject) <- jsCreatePromise
     sequence_ $ jsAddRef <$> [promise, accept, reject]
     gObj <- jsGetGlobalObject
@@ -182,9 +176,9 @@ instance ToJSValue a => JsTypeable (HsAsyncFn s a) where
           void $ jsCallFunction accept [gObj, ref]
 
 -- TODO: Is this the only way to get callbacks to be treated differently?
-instance {-# INCOHERENT #-} (JsTypeable b) => JsTypeable (JsCallback s -> b) where
-  cBare :: (JsCallback s -> b) -> JsUnwrappedNativeFunction
-  cBare fn = \callee isConstruct argArr argCount cbState -> do
+instance {-# INCOHERENT #-} (JsTypeable s b, s1 ~ s) => JsTypeable s (JsCallback s1 -> b) where
+  cBare :: Proxy s -> (JsCallback s -> b) -> JsUnwrappedNativeFunction
+  cBare px fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
       Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
@@ -192,11 +186,11 @@ instance {-# INCOHERENT #-} (JsTypeable b) => JsTypeable (JsCallback s -> b) whe
         typ <- jsGetValueType c
         when (typ /= JsFunction) $
           void $ unsafeThrowJsError $ "Expecting a JS function as an argument, found " <> (T.pack $ show c)
-        cBare (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
+        cBare px (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
-instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
-  cBare :: (a -> b) -> JsUnwrappedNativeFunction
-  cBare fn = \callee isConstruct argArr argCount cbState -> do
+instance (FromJSValue a, JsTypeable s b, s ~ s1) => JsTypeable s1 (a -> b) where
+  cBare :: Proxy s -> (a -> b) -> JsUnwrappedNativeFunction
+  cBare px fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
     case headParam of
       Nothing -> unsafeThrowJsError "Expecting further arguments to function. Not enough provided?"
@@ -204,7 +198,7 @@ instance (FromJSValue a, JsTypeable b) => JsTypeable (a -> b) where
         (conv :: Maybe a) <- fromJSValue <$> unsafeWrapJsValue p
         case conv of
           Nothing -> unsafeThrowJsError "Conversion error when reading a function argument"
-          Just c -> cBare (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
+          Just c -> cBare px (fn c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
 unsafeThrowJsError :: T.Text -> IO JsValueRef
 unsafeThrowJsError str = do
