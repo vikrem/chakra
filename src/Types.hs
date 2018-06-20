@@ -169,7 +169,7 @@ instance ToJSValue a => JsTypeable s (HsAsyncFn a) where
           void $ jsCallFunction accept [gObj, ref]
 
 -- | Allow injectible functions to consumes a JsCallback, bound to the current vm
-instance {-# OVERLAPS #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCallback vm1 -> b) where
+instance {-# INCOHERENT #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCallback vm1 -> b) where
   cBare :: Proxy vm -> (JsCallback vm -> b) -> JsUnwrappedNativeFunction
   cBare px fn = \callee isConstruct argArr argCount cbState -> do
     headParam <- safeHead <$> peekArray (fromIntegral argCount) argArr
