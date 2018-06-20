@@ -1,13 +1,13 @@
 name:                chakra
 version:             0.1.0.0
--- synopsis:
--- description:
+synopsis:            Bindings to ChakraCore JS in Haskell
+description:         Embed a Javascript runtime (ChakraCore) into your program.
 homepage:            https://github.com/vikrem/chakra#readme
-license:             BSD3
+license:             LGPL
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2018 Author name here
+author:              Vikrem
+maintainer:          me@vikrem.com
+copyright:           2018 Vikrem
 category:            Web
 build-type:          Simple
 extra-source-files:  README.md
@@ -26,6 +26,7 @@ extra-source-files:
 
 tested-with:
   GHC == 8.2.2
+  GHC == 8.4.2
 
 library
   hs-source-dirs:      src
@@ -51,8 +52,8 @@ library
                      , vector
   default-language:    Haskell2010
   build-tools:         c2hs
-  ghc-options: -O2 -Wall
-  cc-options: -O2 -Wno-deprecated-declarations -Wall
+  ghc-options: -Wall -Wno-unused-do-bind -Wno-missing-signatures -Wno-name-shadowing
+  cc-options: -Wall
   if os(darwin)
     include-dirs: vendor/ChakraCoreFiles_1_8_2_OSX/include
   if os(linux)

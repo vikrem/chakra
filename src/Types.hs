@@ -41,8 +41,6 @@ import qualified Data.ByteString.Lazy.Char8 as BSL8
 
 import Foreign.Marshal.Array
 
-import GHC.TypeLits
-
 -- | An environment that Chakra work is computed in
 -- Returns an `a` and is bound to a free `vm` param
 newtype Chakra vm a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)

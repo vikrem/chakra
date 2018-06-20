@@ -14,10 +14,8 @@ import Control.Monad ((>=>))
 
 import Control.Exception.Safe
 import Foreign.C.Types
-import Foreign.C.String
 import Foreign.Ptr
 import Foreign.Storable
-import Foreign.ForeignPtr
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 
