@@ -43,29 +43,30 @@ import Foreign.Marshal.Array
 
 import GHC.TypeLits
 
--- An IO exec environment that requires a bound, running js context to the current os thread
--- `vm` is used to bind a free var to the current VM
+-- | An environment that Chakra work is computed in
+-- Returns an `a` and is bound to a free `vm` param
 newtype Chakra vm a = MkChakra { unChakra :: ResIO a } deriving (Functor, Applicative, Monad, MonadIO)
 
--- JS Values that represent more than what an Aeson Value represents
--- This is to let you read them without IO or a Chakra context.
--- allowing them to be pure and to escape Chakra.
+-- | JS Values, used by Chakra.
+-- ToJSValue / FromJSValue can be used to move between Haskell values and JsValues
 newtype JsValue = MkJsValue BS8.ByteString
 
--- A handle to a js function in Chakra
--- Bound to the 's'
-newtype JsCallback s = MkJsCallback JsValueRef
+-- | A handle to a JS function in a Chakra context.
+-- It is bound to the 'vm', and cannot escape its Chakra context.
+newtype JsCallback vm = MkJsCallback JsValueRef
 
--- | A wrapper around an IO action, that will run asynchronously
+-- | A wrapper around an IO action, that will run asynchronously.
+-- These functions are exposed as Promise objects in Chakra.
 newtype HsAsyncFn a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
 
 -- | A wrapper around an IO action, that will run synchronously
 newtype HsFn a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
 
--- Natural transformations
+-- | Transform a synchronous hs function to an asynchronous one
 syncify :: HsFn a -> HsAsyncFn a
 syncify (MkNativeFn fn) = MkNativeAsyncFn fn
 
+-- | Transform an asynchronous function to a synchronous one
 asyncify :: HsAsyncFn a -> HsFn a
 asyncify (MkNativeAsyncFn fn) = MkNativeFn fn
 
@@ -118,15 +119,20 @@ instance ToJSON a => ToJSValue a where
 instance FromJSON a => FromJSValue a where
   fromJSValue (MkJsValue ref) = decodeStrict' ref
 
-class JsTypeable s a where
-  cWrapper :: Proxy s -> a -> Chakra s JsNativeFunction
-  cWrapper px fn = MkChakra $ do
+-- | A typeclass to cover functions that can be injected
+-- JsTypeable vm a means that `a` can be injected into the VM's environment
+-- the `vm` parameter is bound to the `Chakra vm` that it is used in
+class JsTypeable vm a where
+  -- A computation within the Chakra environment, that injects the function
+  cWrapper :: Proxy vm -> a -> Chakra vm JsNativeFunction
+  cWrapper vm fn = MkChakra $ do
     -- Register GC for funptr
     (_, ptr) <- allocate
-      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare px fn)
+      (mkJsNativeFunction $ wrapException $ dropFirstArg $ cBare vm fn)
       freeJsNativeFunction
     return ptr
-  cBare :: Proxy s -> a -> JsUnwrappedNativeFunction
+  -- Transform `a` to a C-function that ChakraCore can accept
+  cBare :: Proxy vm -> a -> JsUnwrappedNativeFunction
 
 -- The first argument passed to a native function is 'this'.
 -- This is used to drop it
@@ -139,11 +145,13 @@ wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
 wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -> do
   unsafeThrowJsError $ T.pack $ displayException ex
 
+-- | A function that simply returns an `a`, and that `a` can be converted to a JsValue, is an injectible function
 instance ToJSValue a => JsTypeable s (HsFn a) where
   -- ignore all args, we just want to return a value
   cBare _ r = \_ _ _ _ _ ->
     unSyncFn r >>= unsafeMakeJsValueRef . toJSValue
 
+-- | An async function that simply returns JsValue-able `a`, can be injected as a function returning a Promise object
 instance ToJSValue a => JsTypeable s (HsAsyncFn a) where
   cBare _ r = \_ _ _ _ _ -> do
     (promise, accept, reject) <- jsCreatePromise
@@ -160,6 +168,7 @@ instance ToJSValue a => JsTypeable s (HsAsyncFn a) where
           ref <- unsafeMakeJsValueRef $ toJSValue val
           void $ jsCallFunction accept [gObj, ref]
 
+-- | Allow injectible functions to consumes a JsCallback, bound to the current vm
 instance {-# OVERLAPS #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCallback vm1 -> b) where
   cBare :: Proxy vm -> (JsCallback vm -> b) -> JsUnwrappedNativeFunction
   cBare px fn = \callee isConstruct argArr argCount cbState -> do
@@ -172,6 +181,7 @@ instance {-# OVERLAPS #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCallba
           void $ unsafeThrowJsError $ "Expecting a JS function as an argument, found " <> (T.pack $ show c)
         cBare px (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
+-- | Allow injectible functions to consume values that have a FromJSValue instance
 instance (FromJSValue a, JsTypeable vm b, vm ~ vm1) => JsTypeable vm1 (a -> b) where
   cBare :: Proxy vm -> (a -> b) -> JsUnwrappedNativeFunction
   cBare px fn = \callee isConstruct argArr argCount cbState -> do

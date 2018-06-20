@@ -36,7 +36,7 @@ import qualified Data.Text as T
 import Raw
 import Types
 
--- Ensure that the IO action runs in a bound thread
+-- | Ensure that the IO action runs in a bound thread
 boundedWait :: IO a -> IO a
 boundedWait f = asyncBound f >>= wait
 
@@ -101,10 +101,10 @@ unsafeChakraEval src = MkChakra $ lift $ do
       source <- jsCreateString "[runScript]"
       jsRun script 0 source JsParseScriptAttributeNone
 
---- | Inject a haskell function into a js environment
----
---- >>> runChakra $ injectChakra (\fn -> return (fn ++ "!") :: IO String) [] "f" >>  chakraEval "f('3');"
---- "3!"
+-- | Inject a haskell function into a js environment
+--
+-- >>> runChakra $ injectChakra (\fn -> return (fn ++ "!") :: IO String) [] "f" >>  chakraEval "f('3');"
+-- "3!"
 injectChakra :: JsTypeable s a => a -> [T.Text] -> T.Text -> Chakra s ()
 injectChakra fn namespaces name = do
   fnWrap <- cWrapper (Proxy :: Proxy s) fn
@@ -123,13 +123,13 @@ unsafeWalkProps obj (x:xs) = (do
     unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
   throwString $ "An exception occurred during function injection: " ++ displayException e
 
--- Runs a callback, but is unsafe as it ignores the bound `s` on the callback
+-- | Runs a callback, but is unsafe as it ignores the bound `s` on the callback
 unsafeRunCallback :: MonadIO m => JsCallback vm -> [JsValue] -> m JsValue
 unsafeRunCallback (MkJsCallback ref) args = liftIO $ do
   argRefs <- sequence $ unsafeMakeJsValueRef <$> args
   retVal <- jsGetGlobalObject >>= \u -> jsCallFunction ref $ u:argRefs
   unsafeWrapJsValue retVal
 
--- Runs a callback bound to the `s` of the vm
+-- | Runs a callback bound to the `vm` of the vm
 runCallback :: JsCallback s -> [JsValue] -> HsFn JsValue
 runCallback = unsafeRunCallback
