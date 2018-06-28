@@ -43,11 +43,6 @@ type family TsType a :: Symbol where
   TsType [a] = (AppendSymbol (TsType a) "[]")
   TsType a = (GTsType (Rep a))
 
--- | The final return type of a native function that returns an `a` to js
-type family RetTsType a :: * where
-  RetTsType (HsAsyncFn a) = HsAsyncFn a
-  RetTsType (HsFn a) = HsFn a
-
 -- | Mechanically generate inline typescript decls for simple datatypes
 class GHasTsType (r :: * -> *) where
   type GTsType r :: Symbol
@@ -172,8 +167,8 @@ instance (HasTSImpl vm1 x, HasTSImpl vm2 y, vm1 ~ vm2) => HasTSImpl vm2 (x :+ y)
   type TSImpl (x :+ y) = (TSImpl x) :+ (TSImpl y)
   injectAPI _ ps ls (x :+ y) = injectAPI (Proxy @x) ps ls x >> injectAPI (Proxy @y) ps ls y
 
-instance (JsTypeable vm1 (RetTsType a), vm1 ~ vm2) => HasTSImpl vm2 (Ret a) where
-  type TSImpl (Ret a) = RetTsType a
+instance (JsTypeable vm1 a, vm1 ~ vm2) => HasTSImpl vm2 (Ret a) where
+  type TSImpl (Ret a) = a
 -- We need a function name!
   injectAPI _ _ [] _ = undefined --injectChakra x ls ""
   injectAPI _ _ xs x = injectChakra @vm2 x (init xs) (last xs)
