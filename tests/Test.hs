@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TupleSections #-}
 
-import Protolude
+import Protolude hiding (catch)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.SmallCheck
@@ -116,7 +116,7 @@ hsNamespacedCall = do
 canCatchBadCC :: Assertion
 canCatchBadCC = do
   death <- newIORef False
-  (runChakra $ injectChakra func [] "f" >> chakraEval "f()") `catchAny`
+  (runChakra $ injectChakra func [] "f" >> chakraEval "f()") `catch`
     \(_ :: SomeException) -> writeIORef death True >> return undefined
   readIORef death >>= (@=?) True
   where
@@ -173,7 +173,7 @@ callbackExc = do
     call :: IORef (Maybe (JsCallback vm)) -> HsFn Value
     call ref = (do
       Just cb <- liftIO $ readIORef ref
+      -- runCallback should throw a JsError here
+      -- That JsError will be caught and rethrown at this function's call-site in js.
       v <- runCallback cb []
       return $ fromMaybe Null $ fromJSValue @Value v)
-      -- Catch exceptions and return control to JS to let it deal with the exc
-      `catchAny` \(_ :: SomeException) -> return Null

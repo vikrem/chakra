@@ -139,8 +139,13 @@ dropFirstArg f = \a b arr argCount c ->
 
 -- Safely capture native exceptions and return them to js
 wrapException :: JsUnwrappedNativeFunction -> JsUnwrappedNativeFunction
-wrapException f = \a b c d e -> f a b c d e `catchDeep` \(ex :: SomeException) -> do
-  unsafeThrowJsError $ T.pack $ displayException ex
+wrapException f = \a b c d e -> raiseUnknown $ raiseJs $ f a b c d e
+  where
+    -- The error could be any error at all
+    raiseUnknown f = f `catchDeep` \(ex :: SomeException) ->
+      unsafeThrowJsError $ T.pack $ displayException ex
+    -- The error is an exception in the JS runtime (e.g. throw kwd in js was called)
+    raiseJs f = f `catchDeep` \(_ :: JsErrorException) -> jsGetUndefinedValue
 
 -- | A function that simply returns an `a`, and that `a` can be converted to a JsValue, is an injectible function
 instance ToJSValue a => JsTypeable s (HsFn a) where

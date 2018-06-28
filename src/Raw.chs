@@ -11,6 +11,7 @@
 module Raw where
 
 import Control.Monad ((>=>))
+import Data.Typeable (cast)
 
 import Control.Exception.Safe
 import Foreign.C.Types
@@ -21,6 +22,24 @@ import Foreign.Marshal.Array
 
 import qualified Data.Text as T
 import qualified Data.Text.Foreign as T
+
+{#enum JsErrorCode {} deriving (Eq, Show) #}
+{#enum JsValueType {} deriving (Eq, Show) #}
+{#enum JsRuntimeAttributes {} deriving (Eq, Show) #}
+{#enum JsParseScriptAttributes {} deriving (Eq, Show) #}
+
+-- | Exception type to capture exceptions raised within JS.
+data SomeJsException = forall e. Exception e => SomeJsException e
+
+instance Show SomeJsException where
+  show (SomeJsException e) = show e
+
+instance Exception SomeJsException
+data JsErrorException = JsErrorException JsErrorCode T.Text deriving (Show)
+
+instance Exception JsErrorException where
+  toException = toException . SomeJsException
+  fromException x = fromException x >>= \(SomeJsException e) -> cast e
 
 mNullPtr :: Ptr a -> IO (Ptr b)
 mNullPtr = return . const Foreign.Ptr.nullPtr
@@ -56,18 +75,13 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
         excStrVal <- jsConvertValueToString exc
         excStr <- unsafeExtractJsString excStrVal
         jsSetException exc -- Don't clear the exception
-        throwString $ T.unpack excStr -- Toss
+        throw $ JsErrorException errCode excStr -- Toss
       JsErrorInvalidArgument -> do
         -- The runtime is actually not in an exception state, but we made a bad func call
         throwString $ "An error code was raised during a Chakra function call: "
           ++ show @JsErrorCode (toEnum . fromIntegral $ e)
       _ -> do
         throwString $ "An exception occurred during the handling of an earlier exception: " ++ show errCode
-
-{#enum JsErrorCode {} deriving (Eq, Show) #}
-{#enum JsValueType {} deriving (Eq, Show) #}
-{#enum JsRuntimeAttributes {} deriving (Eq, Show) #}
-{#enum JsParseScriptAttributes {} deriving (Eq, Show) #}
 
 type JsSourceContext = {#type JsSourceContext #}
 type JsNativeFunction = {#type JsNativeFunction #}

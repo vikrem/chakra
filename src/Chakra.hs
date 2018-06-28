@@ -4,18 +4,19 @@
 module Chakra (
   Chakra,
   FromJSValue,
-  JsCallback,
-  HsFn,
   HsAsyncFn,
+  HsFn,
+  JsCallback,
   JsTypeable,
   JsValue,
+  SomeJsException,
   ToJSValue,
-  runCallback,
   chakraEval,
   fromJSValue,
   injectChakra,
   jsNull,
   jsUndefined,
+  runCallback,
   runChakra,
   toJSValue,
   )
@@ -120,7 +121,7 @@ unsafeWalkProps obj [] = return obj
 unsafeWalkProps obj (x:xs) = (do
     nameObj <- jsCreateString x
     nextObj <- jsGetIndexedProperty obj nameObj
-    unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeException) ->
+    unsafeWalkProps nextObj xs) `catchDeep` \(e :: SomeJsException) ->
   throwString $ "An exception occurred during function injection: " ++ displayException e
 
 -- | Runs a callback, but is unsafe as it ignores the bound `s` on the callback
@@ -131,5 +132,6 @@ unsafeRunCallback (MkJsCallback ref) args = liftIO $ do
   unsafeWrapJsValue retVal
 
 -- | Runs a callback bound to the `vm` of the vm
+-- If the js callback throws an exception, that exception will be of type `SomeJsException`, and will be rethrown at the site of the native function call if not caught in Haskell.
 runCallback :: JsCallback s -> [JsValue] -> HsFn JsValue
 runCallback = unsafeRunCallback
