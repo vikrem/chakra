@@ -50,6 +50,7 @@ tests =
     [ testCase "JS->HS namespaced function call" hsNamespacedCall
     , testCase "JS->HS->JS callback usage" callbackTest
     , testCase "Stored callback usage" storedCallbackTest
+    , testCase "Exceptions in a callback can pass through native function" callbackExc
     , testCase "Catch invalid Haskell call" canCatchBadCC
     ]
   ]
@@ -135,14 +136,14 @@ callbackTest = do
 
 storedCallbackTest :: Assertion
 storedCallbackTest = do
-  let js = "register((x, y) => {return 5*x*y;}); call();"
-  v <- runChakra $ do
-    ref <- liftIO $ newIORef Nothing
-    injectChakra (register ref) [] "register"
-    injectChakra (call ref) [] "call"
-    chakraEval js
-  let (Just val) = fromJSValue @Int v
-  val @?= 30
+    let js = "register((x, y) => {return 5*x*y;}); call();"
+    v <- runChakra $ do
+      ref <- liftIO $ newIORef Nothing
+      injectChakra (register ref) [] "register"
+      injectChakra (call ref) [] "call"
+      chakraEval js
+    let (Just val) = fromJSValue @Int v
+    val @?= 30
   where
     register :: IORef (Maybe (JsCallback vm)) -> JsCallback vm -> HsFn Value
     register ref cb = do
@@ -153,3 +154,26 @@ storedCallbackTest = do
       Just cb <- liftIO $ readIORef ref
       v <- runCallback cb [toJSValue @Int 3, toJSValue @Int 2]
       return $ fromMaybe Null $ fromJSValue @Value v
+
+callbackExc :: Assertion
+callbackExc = do
+    let js = "register((x, y) => {throw new Error('hi');}); try { call(); } catch (e) { (() => {return e.message;})(); }"
+    v <- runChakra $ do
+      ref <- liftIO $ newIORef Nothing
+      injectChakra (register ref) [] "register"
+      injectChakra (call ref) [] "call"
+      chakraEval js
+    let (Just val) = fromJSValue @T.Text v
+    val @?= "hi"
+  where
+    register :: IORef (Maybe (JsCallback vm)) -> JsCallback vm -> HsFn Value
+    register ref cb = do
+      liftIO $ writeIORef ref $ Just cb
+      return Null
+    call :: IORef (Maybe (JsCallback vm)) -> HsFn Value
+    call ref = (do
+      Just cb <- liftIO $ readIORef ref
+      v <- runCallback cb []
+      return $ fromMaybe Null $ fromJSValue @Value v)
+      -- Catch exceptions and return control to JS to let it deal with the exc
+      `catchAny` \(_ :: SomeException) -> return Null

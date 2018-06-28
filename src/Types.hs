@@ -54,10 +54,10 @@ newtype JsCallback vm = MkJsCallback JsValueRef
 
 -- | A wrapper around an IO action, that will run asynchronously.
 -- These functions are exposed as Promise objects in Chakra.
-newtype HsAsyncFn a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
+newtype HsAsyncFn a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO, MonadCatch, MonadThrow)
 
 -- | A wrapper around an IO action, that will run synchronously
-newtype HsFn a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO)
+newtype HsFn a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO, MonadCatch, MonadThrow)
 
 -- | Transform a synchronous hs function to an asynchronous one
 syncify :: HsFn a -> HsAsyncFn a
