@@ -33,6 +33,7 @@ type family TsType a :: Symbol where
   TsType Float = "number"
   TsType T.Text = "string"
   TsType Value = "any"
+  TsType (JsCallback vm) = "Function"
   TsType Object = "Object"
   TsType Bool = "true | false"
   TsType UUID = "string"
@@ -48,21 +49,29 @@ class GHasTsType (r :: * -> *) where
 
 -- | Grab field names
 instance GHasTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) where
-  type GTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) = AppendSymbol fieldName (AppendSymbol ": " (TsType typ))
+  type GTsType (M1 S ('MetaSel ('Just fieldName) a b c) (Rec0 typ)) =
+    AppendSymbol fieldName (AppendSymbol ": " (TsType typ))
+
+instance GHasTsType (C1 ('MetaCons consName fixity 'False) U1) where
+  type GTsType (C1 ('MetaCons consName fixity 'False) U1) =
+    AppendSymbol "\"" (AppendSymbol consName "\"")
 
 instance GHasTsType b => GHasTsType (D1 a b) where
   type GTsType (D1 a b) = GTsType b
 
-instance GHasTsType b => GHasTsType (C1 a b) where
-  type GTsType (C1 a b) = AppendSymbol "{ " (AppendSymbol (GTsType b) " }")
+instance GHasTsType b => GHasTsType (C1 ('MetaCons consName fixity 'True) b) where
+  type GTsType (C1 ('MetaCons consName fixity 'True) b) =
+    AppendSymbol "{ " (AppendSymbol (GTsType b) " }")
 
 -- | Product {foo: fooType, bar: barType}
 instance (GHasTsType a, GHasTsType b) => GHasTsType (a :*: b) where
-  type GTsType (a :*: b) = AppendSymbol (GTsType a) (AppendSymbol ", " (GTsType b))
+  type GTsType (a :*: b) =
+    AppendSymbol (GTsType a) (AppendSymbol ", " (GTsType b))
 
 -- | Sum {foo: fooType} | {bar: barType}
 instance (GHasTsType a, GHasTsType b) => GHasTsType (a :+: b) where
-  type GTsType (a :+: b) = AppendSymbol (GTsType a) (AppendSymbol " | " (GTsType b))
+  type GTsType (a :+: b) =
+    AppendSymbol (GTsType a) (AppendSymbol " | " (GTsType b))
 
 -- | Construct a namespace
 data NS (n :: Symbol) (a :: [*])
