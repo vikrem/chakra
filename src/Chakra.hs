@@ -11,6 +11,7 @@ module Chakra (
   JsValue,
   SomeJsException,
   ToJSValue,
+  asyncify,
   chakraEval,
   fromJSValue,
   injectChakra,
@@ -18,6 +19,7 @@ module Chakra (
   jsUndefined,
   runCallback,
   runChakra,
+  syncify,
   toJSValue,
   )
 where

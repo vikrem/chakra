@@ -39,7 +39,6 @@ type family TsType a :: Symbol where
   TsType UTCTime = "string"
   TsType (Maybe a) = AppendSymbol (TsType a) " | null"
   TsType () = "void"
-  TsType (HsAsyncFn a) = AppendSymbol "Promise<" (AppendSymbol (TsType a) ">")
   TsType [a] = (AppendSymbol (TsType a) "[]")
   TsType a = (GTsType (Rep a))
 
@@ -73,6 +72,8 @@ data Fn (name :: Symbol)
 data Arg (name :: Symbol) (typ :: *)
 -- | Define function return type
 data Ret (typ :: *)
+-- | Define promise return type
+data PromiseRet (typ :: *)
 -- | Used to glue together function definitions
 data f1 :> f2
 infixr 8 :>
@@ -137,6 +138,10 @@ instance (HasTSSpec xs, KnownSymbol n, KnownSymbol (TsType t)) => HasTSSpec (Arg
 instance KnownSymbol (TsType t) => HasTSSpec (Ret t) where
   tsSpec _ _ = "): " <> symtext (Proxy @(TsType t))
 
+-- | Promise return type. Closes arg list
+instance KnownSymbol (TsType t) => HasTSSpec (PromiseRet t) where
+  tsSpec _ _ = "): Promise<" <> symtext (Proxy @(TsType t)) <> ">"
+
 class HasTSImpl s a where
   type TSImpl a :: *
   -- | Proxy needed because TSImpl isn't injective
@@ -167,8 +172,14 @@ instance (HasTSImpl vm1 x, HasTSImpl vm2 y, vm1 ~ vm2) => HasTSImpl vm2 (x :+ y)
   type TSImpl (x :+ y) = (TSImpl x) :+ (TSImpl y)
   injectAPI _ ps ls (x :+ y) = injectAPI (Proxy @x) ps ls x >> injectAPI (Proxy @y) ps ls y
 
-instance (JsTypeable vm1 a, vm1 ~ vm2) => HasTSImpl vm2 (Ret a) where
-  type TSImpl (Ret a) = a
+instance (JsTypeable vm1 (HsAsyncFn a), vm1 ~ vm2) => HasTSImpl vm2 (PromiseRet a) where
+  type TSImpl (PromiseRet a) = HsAsyncFn a
+-- We need a function name!
+  injectAPI _ _ [] _ = undefined --injectChakra x ls ""
+  injectAPI _ _ xs x = injectChakra @vm2 x (init xs) (last xs)
+
+instance (JsTypeable vm1 (HsFn a), vm1 ~ vm2) => HasTSImpl vm2 (Ret a) where
+  type TSImpl (Ret a) = HsFn a
 -- We need a function name!
   injectAPI _ _ [] _ = undefined --injectChakra x ls ""
   injectAPI _ _ xs x = injectChakra @vm2 x (init xs) (last xs)

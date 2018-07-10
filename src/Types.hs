@@ -60,12 +60,12 @@ newtype HsAsyncFn a = MkNativeAsyncFn { unAsyncFn :: IO a } deriving (Functor, A
 newtype HsFn a = MkNativeFn { unSyncFn :: IO a } deriving (Functor, Applicative, Monad, MonadIO, MonadCatch, MonadThrow)
 
 -- | Transform a synchronous hs function to an asynchronous one
-syncify :: HsFn a -> HsAsyncFn a
-syncify (MkNativeFn fn) = MkNativeAsyncFn fn
+asyncify :: HsFn a -> HsAsyncFn a
+asyncify (MkNativeFn fn) = MkNativeAsyncFn fn
 
 -- | Transform an asynchronous function to a synchronous one
-asyncify :: HsAsyncFn a -> HsFn a
-asyncify (MkNativeAsyncFn fn) = MkNativeFn fn
+syncify :: HsAsyncFn a -> HsFn a
+syncify (MkNativeAsyncFn fn) = MkNativeFn fn
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
