@@ -13,6 +13,7 @@ module Raw where
 import Control.Monad ((>=>))
 import Data.Typeable (cast)
 
+import Control.Concurrent
 import Control.Exception.Safe
 import Foreign.C.Types
 import Foreign.Ptr
@@ -21,6 +22,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 
 import qualified Data.Text as T
+import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Foreign as T
 
 {#enum JsErrorCode {} deriving (Eq, Show) #}
@@ -246,7 +248,7 @@ unwrapSafeRef (MkSafeRef r) = r
 {#fun JsAddRef as ^
  {`JsValueRef',
   alloca- `CUInt' peek*
-} -> `JsErrorCode' throwIfJsError*-
+} -> `JsErrorCode' --throwIfJsError*- Is this safe to remove..?
  #}
 
 {#fun JsRelease as ^
