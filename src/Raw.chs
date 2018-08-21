@@ -10,7 +10,7 @@
 #include "ChakraCore.h"
 module Raw where
 
-import Control.Monad ((>=>))
+import Control.Monad ((>=>), forM)
 import Data.Typeable (cast)
 
 import Control.Concurrent
@@ -37,7 +37,15 @@ instance Show SomeJsException where
   show (SomeJsException e) = show e
 
 instance Exception SomeJsException
-data JsErrorException = JsErrorException JsErrorCode T.Text deriving (Show)
+data JsErrorException = JsErrorException {
+  errCode :: JsErrorCode,
+  errStr :: T.Text,
+  errLine :: T.Text,
+  errColumn :: T.Text,
+  errSourceLine :: T.Text,
+  errSourceLength :: T.Text,
+  errSourceURL :: T.Text
+  } deriving (Show)
 
 instance Exception JsErrorException where
   toException = toException . SomeJsException
@@ -71,13 +79,15 @@ throwIfJsError e = case (toEnum . fromIntegral $ e) of
   JsNoError -> pure () -- No exception
   _ -> do
     -- Grab the exception string from the runtime and throw it
-    (errCode, exc) <- jsGetAndClearException
+    (errCode, excobj) <- jsGetAndClearExceptionWithMetadata
     case errCode of
       JsNoError -> do
-        excStrVal <- jsConvertValueToString exc
-        excStr <- unsafeExtractJsString excStrVal
-        jsSetException exc -- Don't clear the exception
-        throw $ JsErrorException errCode excStr -- Toss
+        excObj <- jsCreateString "exception" >>= jsGetIndexedProperty excobj
+        excStr <- jsConvertValueToString excObj >>= unsafeExtractJsString
+        [line, column, source, length, url] <- forM ["line", "column", "source", "length", "url"] $ \propName ->
+          jsCreateString propName >>= jsGetIndexedProperty excobj >>= jsConvertValueToString >>= unsafeExtractJsString
+        jsSetException excObj -- Don't clear the exception
+        throw $ JsErrorException errCode excStr line column source length url -- Toss
       JsErrorInvalidArgument -> do
         -- The runtime is actually not in an exception state, but we made a bad func call
         throwString $ "An error code was raised during a Chakra function call: "
@@ -196,7 +206,7 @@ unwrapSafeRef (MkSafeRef r) = r
 } -> `JsErrorCode' throwIfJsError*-
  #}
 
-{#fun JsGetAndClearException as ^
+{#fun JsGetAndClearExceptionWithMetadata as ^
  {alloca- `JsValueRef' jsPeek*
 } -> `JsErrorCode'
  #}
