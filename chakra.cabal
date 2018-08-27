@@ -15,14 +15,14 @@ cabal-version:       >=1.10
 extra-source-files:
   README.md
   LICENSE
-  vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraCommon.h
-  vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraCoreVersion.h
-  vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraDebug.h
-  vendor/ChakraCoreFiles_1_8_2_Linux/include/ChakraCore.h
-  vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCommon.h
-  vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCoreVersion.h
-  vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraDebug.h
-  vendor/ChakraCoreFiles_1_8_2_OSX/include/ChakraCore.h
+  vendor/ChakraCoreFiles_1_10_2_Linux/include/ChakraCommon.h
+  vendor/ChakraCoreFiles_1_10_2_Linux/include/ChakraCoreVersion.h
+  vendor/ChakraCoreFiles_1_10_2_Linux/include/ChakraDebug.h
+  vendor/ChakraCoreFiles_1_10_2_Linux/include/ChakraCore.h
+  vendor/ChakraCoreFiles_1_10_2_OSX/include/ChakraCommon.h
+  vendor/ChakraCoreFiles_1_10_2_OSX/include/ChakraCoreVersion.h
+  vendor/ChakraCoreFiles_1_10_2_OSX/include/ChakraDebug.h
+  vendor/ChakraCoreFiles_1_10_2_OSX/include/ChakraCore.h
 
 tested-with:
   GHC == 8.2.2
@@ -55,9 +55,9 @@ library
   ghc-options: -Wall -Wno-unused-do-bind -Wno-missing-signatures -Wno-name-shadowing
   cc-options: -Wall
   if os(darwin)
-    include-dirs: vendor/ChakraCoreFiles_1_8_2_OSX/include
+    include-dirs: vendor/ChakraCoreFiles_1_10_2_OSX/include
   if os(linux)
-    include-dirs: vendor/ChakraCoreFiles_1_8_2_Linux/include
+    include-dirs: vendor/ChakraCoreFiles_1_10_2_Linux/include
   includes: ChakraCommon.h ChakraCoreVersion.h ChakraDebug.h ChakraCore.h
   extra-libraries: ChakraCore
   extra-lib-dirs: /usr/local/lib/
