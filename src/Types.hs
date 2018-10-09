@@ -181,6 +181,7 @@ instance {-# INCOHERENT #-} (JsTypeable vm b, vm1 ~ vm) => JsTypeable vm (JsCall
         typ <- jsGetValueType c
         when (typ /= JsFunction) $
           void $ unsafeThrowJsError $ "Expecting a JS function as an argument, found " <> (T.pack $ show c)
+        jsAddRef c -- Callbacks may be stored by hs and used later.. this needs a better fix
         cBare px (fn $ MkJsCallback c) callee isConstruct (advancePtr argArr 1) (argCount - 1) cbState
 
 -- | Allow injectible functions to consume values that have a FromJSValue instance
